@@ -76,3 +76,7 @@ Cube-prompt/
 ## License
 
 MIT（见 `LICENSE`）
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=2797565800/CubeTT&type=Date)](https://star-history.com/#2797565800/CubeTT&Date)
