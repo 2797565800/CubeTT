@@ -42,15 +42,6 @@
 
 > 提示：如果接口在本地 `file://` 直接预览时失败，通常是浏览器跨域限制；请在扩展环境中测试。
 
-## 自定义“扩展说明/作者信息”
-
-到 `popup.js` 顶部修改 `ABOUT_INFO`：
-
-- `extensionDescription`：扩展介绍
-- `authorName`：作者名
-- `authorLink`：作者链接
-
-修改后在 `chrome://extensions/` 点击“刷新”即可生效。
 
 ## 常见问题
 
