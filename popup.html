@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CubeTT</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <svg aria-hidden="true" focusable="false" class="svg-sprite-defs">
+      <defs>
+        <symbol id="i-moon" viewBox="0 0 24 24">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79Z"></path>
+        </symbol>
+        <symbol id="i-sun" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2.5M12 19.5V22M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M2 12h2.5M19.5 12H22M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77"></path>
+        </symbol>
+        <symbol id="i-settings" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3.2"></circle>
+          <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 0 1 0 2.8 2 2 0 0 1-2.8 0l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 0 1-4 0v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 0 1-2.8 0 2 2 0 0 1 0-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 0 1 0-4h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 0 1 0-2.8 2 2 0 0 1 2.8 0l.1.1a1 1 0 0 0 1.1.2h.1a1 1 0 0 0 .5-.9V4a2 2 0 0 1 4 0v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a2 2 0 0 1 2.8 0 2 2 0 0 1 0 2.8l-.1.1a1 1 0 0 0-.2 1.1v.1a1 1 0 0 0 .9.5H20a2 2 0 0 1 0 4h-.2a1 1 0 0 0-.9.6Z"></path>
+        </symbol>
+        <symbol id="i-help" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9"></circle>
+          <path d="M9.35 9a2.65 2.65 0 1 1 4.6 1.8c-.7.62-1.45 1.05-1.45 2.2"></path>
+          <circle cx="12" cy="16.8" r="1"></circle>
+        </symbol>
+        <symbol id="i-link" viewBox="0 0 24 24">
+          <path d="M10.5 13.5l3-3"></path>
+          <path d="M8 16a4 4 0 0 1 0-5.7l2.3-2.3a4 4 0 0 1 5.7 5.7L15 15"></path>
+          <path d="M16 8a4 4 0 0 1 0 5.7l-2.3 2.3a4 4 0 1 1-5.7-5.7L9 9"></path>
+        </symbol>
+        <symbol id="i-key" viewBox="0 0 24 24">
+          <circle cx="7.5" cy="12.5" r="3.5"></circle>
+          <path d="M11 12.5h9M17 12.5v3M20 12.5v2"></path>
+        </symbol>
+        <symbol id="i-eye" viewBox="0 0 24 24">
+          <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
+          <circle cx="12" cy="12" r="3"></circle>
+        </symbol>
+        <symbol id="i-eye-off" viewBox="0 0 24 24">
+          <path d="M3 3l18 18"></path>
+          <path d="M10.6 6.1A11.8 11.8 0 0 1 12 6c6.5 0 10 6 10 6a18.6 18.6 0 0 1-3.2 3.8M6.6 6.8A17.7 17.7 0 0 0 2 12s3.5 6 10 6a11.7 11.7 0 0 0 5.2-1.2"></path>
+          <path d="M9.7 9.7A3.2 3.2 0 0 0 12 15c.5 0 .9-.1 1.3-.3"></path>
+        </symbol>
+        <symbol id="i-cube" viewBox="0 0 24 24">
+          <path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z"></path>
+          <path d="M12 3v18M4 7.5l8 4.5 8-4.5"></path>
+        </symbol>
+        <symbol id="i-save" viewBox="0 0 24 24">
+          <path d="M4 5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5Z"></path>
+          <path d="M8 3v5h8V3M8 21v-7h8v7"></path>
+        </symbol>
+        <symbol id="i-palette" viewBox="0 0 24 24">
+          <path d="M12 3a9 9 0 1 0 0 18h1a2.5 2.5 0 0 0 0-5h-1.2A2.8 2.8 0 0 1 9 13.2 2.8 2.8 0 0 1 11.8 10H14a4 4 0 0 0 0-8h-2Z"></path>
+          <circle cx="7.5" cy="9" r="1"></circle>
+          <circle cx="10.5" cy="7" r="1"></circle>
+          <circle cx="14" cy="7.2" r="1"></circle>
+        </symbol>
+        <symbol id="i-docs" viewBox="0 0 24 24">
+          <rect x="6" y="3" width="12" height="18" rx="2"></rect>
+          <path d="M9 8h6M9 12h6M9 16h4"></path>
+        </symbol>
+        <symbol id="i-folder" viewBox="0 0 24 24">
+          <path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z"></path>
+        </symbol>
+        <symbol id="i-upload" viewBox="0 0 24 24">
+          <path d="M12 16V6"></path>
+          <path d="m8.5 9.5 3.5-3.5 3.5 3.5"></path>
+          <path d="M4 17.5v1A2.5 2.5 0 0 0 6.5 21h11a2.5 2.5 0 0 0 2.5-2.5v-1"></path>
+        </symbol>
+        <symbol id="i-edit" viewBox="0 0 24 24">
+          <path d="m4 20 4.5-1 9.7-9.7a1.8 1.8 0 0 0 0-2.6l-.9-.9a1.8 1.8 0 0 0-2.6 0L5 15.5 4 20Z"></path>
+          <path d="m13.5 6.5 4 4"></path>
+        </symbol>
+        <symbol id="i-sparkle" viewBox="0 0 24 24">
+          <path d="M12 3.5 13.8 8l4.7 1.8-4.7 1.8L12 16l-1.8-4.4L5.5 9.8 10.2 8 12 3.5Z"></path>
+          <path d="M18.5 14.5 19.4 17l2.6.9-2.6.9-.9 2.7-.9-2.7-2.6-.9 2.6-.9.9-2.5Z"></path>
+        </symbol>
+        <symbol id="i-search" viewBox="0 0 24 24">
+          <circle cx="11" cy="11" r="6.5"></circle>
+          <path d="m16 16 4.5 4.5"></path>
+        </symbol>
+        <symbol id="i-x" viewBox="0 0 24 24">
+          <path d="M6 6l12 12M18 6 6 18"></path>
+        </symbol>
+        <symbol id="i-copy" viewBox="0 0 24 24">
+          <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+          <path d="M5 15V6a2 2 0 0 1 2-2h9"></path>
+        </symbol>
+        <symbol id="i-bookmark" viewBox="0 0 24 24">
+          <path d="M7 4a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v18l-5-3-5 3V4Z"></path>
+        </symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9"></circle>
+          <path d="M12 7v5l3 2"></path>
+        </symbol>
+        <symbol id="i-chevron-up" viewBox="0 0 24 24">
+          <path d="m6 14 6-6 6 6"></path>
+        </symbol>
+        <symbol id="i-loader" viewBox="0 0 24 24">
+          <path d="M12 3a9 9 0 1 0 9 9"></path>
+        </symbol>
+      </defs>
+    </svg>
+
+    <main class="app">
+      <div class="title-row">
+        <div class="brand-wrap">
+          <span class="brand-logo" aria-hidden="true">
+            <img class="brand-logo-mark-img" src="assets/logo-mark.svg" alt="" />
+          </span>
+          <div class="brand-title-block">
+            <h1>CubeTT</h1>
+            <div id="llmStatus" class="llm-status llm-unconfigured" role="status" aria-live="polite">
+              <span class="dot" aria-hidden="true"></span>
+              <span id="llmStatusText">LLM 未配置</span>
+            </div>
+          </div>
+        </div>
+        <div class="title-actions">
+          <button id="modeToggleBtn" class="icon-btn" type="button" aria-label="亮暗切换" title="亮暗切换">
+            <svg class="ui-icon ui-icon-md" aria-hidden="true">
+              <use id="modeToggleIcon" href="#i-moon"></use>
+            </svg>
+          </button>
+          <button
+            id="helpToggleBtn"
+            class="icon-btn help-btn"
+            type="button"
+            aria-expanded="false"
+            aria-label="扩展说明与作者"
+            title="扩展说明与作者"
+          >
+            <svg class="ui-icon ui-icon-md" aria-hidden="true">
+              <use href="#i-help"></use>
+            </svg>
+          </button>
+          <button id="settingsToggleBtn" class="icon-btn" type="button" aria-expanded="false" aria-label="设置" title="设置">
+            <svg class="ui-icon ui-icon-md" aria-hidden="true">
+              <use href="#i-settings"></use>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <section id="settingsPanel" class="settings-panel hidden">
+        <article class="settings-card">
+          <button class="card-toggle" type="button" aria-expanded="true" data-target="llmCardBody" title="折叠/展开">
+            <svg class="ui-icon ui-icon-sm" aria-hidden="true">
+              <use href="#i-chevron-up"></use>
+            </svg>
+          </button>
+          <div class="card-head">
+            <span class="card-head-icon" aria-hidden="true">
+              <svg class="ui-icon ui-icon-lg">
+                <use href="#i-link"></use>
+              </svg>
+            </span>
+            <div>
+              <h2>LLM 连接设置</h2>
+              <p>配置远程模型接口并检测连通性</p>
+            </div>
+          </div>
+          <div id="llmCardBody" class="card-body">
+            <label for="apiEndpointInput">API 接口地址</label>
+            <div class="input-shell">
+              <span class="input-leading" aria-hidden="true">
+                <svg class="ui-icon ui-icon-sm">
+                  <use href="#i-link"></use>
+                </svg>
+              </span>
+              <input id="apiEndpointInput" type="url" placeholder="例如：https://api.example.com/v1/chat/completions" />
+            </div>
+
+            <label for="apiKeyInput">API Key</label>
+            <div class="input-shell input-with-icon">
+              <span class="input-leading" aria-hidden="true">
+                <svg class="ui-icon ui-icon-sm">
+                  <use href="#i-key"></use>
+                </svg>
+              </span>
+              <input id="apiKeyInput" type="password" placeholder="输入 API Key（可选）" />
+              <button
+                id="toggleApiKeyBtn"
+                class="field-icon-btn"
+                type="button"
+                aria-label="显示 API Key"
+                title="显示 API Key"
+              >
+                <svg class="ui-icon ui-icon-sm" aria-hidden="true">
+                  <use id="toggleApiKeyIcon" href="#i-eye"></use>
+                </svg>
+              </button>
+            </div>
+
+            <label for="apiModelInput">模型名称</label>
+            <div class="input-shell">
+              <span class="input-leading" aria-hidden="true">
+                <svg class="ui-icon ui-icon-sm">
+                  <use href="#i-cube"></use>
+                </svg>
+              </span>
+              <input id="apiModelInput" type="text" placeholder="例如：gpt-4 / 其他模型名" />
+            </div>
+
+            <button id="saveSettingsBtn" class="btn primary gradient-btn" type="button">
+              <span class="btn-icon" aria-hidden="true">
+                <svg class="ui-icon ui-icon-sm">
+                  <use href="#i-save"></use>
+                </svg>
+              </span>
+              <span>保存接口设置</span>
+            </button>
+          </div>
+        </article>
+
+        <article class="settings-card">
+          <button class="card-toggle" type="button" aria-expanded="true" data-target="themeCardBody" title="折叠/展开">
+            <svg class="ui-icon ui-icon-sm" aria-hidden="true">
+              <use href="#i-chevron-up"></use>
+            </svg>
+          </button>
+          <div class="card-head">
+            <span class="card-head-icon" aria-hidden="true">
+              <svg class="ui-icon ui-icon-lg">
+                <use href="#i-palette"></use>
+              </svg>
+            </span>
+            <div>
+              <h2>主题设置</h2>
+              <p>暗色/亮色可在标题栏切换，下面是主色调</p>
+            </div>
+          </div>
+          <div id="themeCardBody" class="card-body">
+            <label>亮色主题</label>
+            <div id="themeOptions" class="theme-options">
+              <button class="theme-swatch" type="button" data-theme="ocean" title="海蓝">
+                <span class="swatch-dot theme-ocean" aria-hidden="true"></span>
+                <span class="swatch-name">海蓝</span>
+              </button>
+              <button class="theme-swatch" type="button" data-theme="leaf" title="青绿">
+                <span class="swatch-dot theme-leaf" aria-hidden="true"></span>
+                <span class="swatch-name">青绿</span>
+              </button>
+              <button class="theme-swatch" type="button" data-theme="sun" title="暖橙">
+                <span class="swatch-dot theme-sun" aria-hidden="true"></span>
+                <span class="swatch-name">暖橙</span>
+              </button>
+              <button class="theme-swatch" type="button" data-theme="rose" title="珊瑚粉">
+                <span class="swatch-dot theme-rose" aria-hidden="true"></span>
+                <span class="swatch-name">珊瑚粉</span>
+              </button>
+              <button class="theme-swatch" type="button" data-theme="royal" title="宝石蓝">
+                <span class="swatch-dot theme-royal" aria-hidden="true"></span>
+                <span class="swatch-name">宝石蓝</span>
+              </button>
+            </div>
+          </div>
+        </article>
+
+        <article class="settings-card">
+          <button class="card-toggle" type="button" aria-expanded="true" data-target="exportCardBody" title="折叠/展开">
+            <svg class="ui-icon ui-icon-sm" aria-hidden="true">
+              <use href="#i-chevron-up"></use>
+            </svg>
+          </button>
+          <div class="card-head">
+            <span class="card-head-icon" aria-hidden="true">
+              <svg class="ui-icon ui-icon-lg">
+                <use href="#i-docs"></use>
+              </svg>
+            </span>
+            <div>
+              <h2>提示词管理与导出</h2>
+              <p>管理常用提示词并导出优化结果</p>
+            </div>
+          </div>
+          <div id="exportCardBody" class="card-body">
+            <label>全部提示词保存路径</label>
+            <div class="path-picker-row">
+              <div class="path-row">
+                <span class="path-leading" aria-hidden="true">
+                  <svg class="ui-icon ui-icon-sm">
+                    <use href="#i-folder"></use>
+                  </svg>
+                </span>
+                <span id="promptSavePathText" class="path-value">未设置（请先选择保存目录）</span>
+              </div>
+              <button id="selectPromptSaveDirBtn" class="btn ghost" type="button">
+                <span class="btn-icon" aria-hidden="true">
+                  <svg class="ui-icon ui-icon-sm">
+                    <use href="#i-folder"></use>
+                  </svg>
+                </span>
+                <span>选择保存目录</span>
+              </button>
+            </div>
+            <button id="exportBtn" class="btn ghost wide" type="button">
+              <span class="btn-icon" aria-hidden="true">
+                <svg class="ui-icon ui-icon-sm">
+                  <use href="#i-upload"></use>
+                </svg>
+              </span>
+              <span>导出全部提示词</span>
+            </button>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel prompt-panel">
+        <label for="inputText" class="section-label with-icon">
+          <span class="section-icon" aria-hidden="true">
+            <svg class="ui-icon ui-icon-sm">
+              <use href="#i-edit"></use>
+            </svg>
+          </span>
+          <span>输入你的想法 / 问题</span>
+        </label>
+        <div class="textarea-wrap">
+          <textarea
+            id="inputText"
+            rows="5"
+            maxlength="1000"
+            placeholder="例如：帮我写一篇关于远程办公效率提升的文章，面向职场人，要求实用，可执行。"
+          ></textarea>
+          <div class="char-count"><span id="inputWordCount">0</span>/1000</div>
+        </div>
+
+        <label for="sceneSelect" class="section-label">场景提示词</label>
+        <div class="scene-tabs" role="tablist" aria-label="场景提示词">
+          <button class="scene-chip active" type="button" data-scene="writing">写作</button>
+          <button class="scene-chip" type="button" data-scene="marketing">营销</button>
+          <button class="scene-chip" type="button" data-scene="coding">编程</button>
+          <button class="scene-chip" type="button" data-scene="learning">学习</button>
+          <button class="scene-chip" type="button" data-scene="workplace">职场</button>
+        </div>
+        <select id="sceneSelect" class="visually-hidden" aria-hidden="true">
+          <option value="writing">写作</option>
+          <option value="marketing">营销</option>
+          <option value="coding">编程</option>
+          <option value="learning">学习</option>
+          <option value="workplace">职场</option>
+        </select>
+
+        <button id="optimizeBtn" class="btn primary gradient-btn main-optimize" type="button">
+          <span class="btn-icon" aria-hidden="true">
+            <svg class="ui-icon ui-icon-sm">
+              <use id="optimizeBtnIcon" href="#i-sparkle"></use>
+            </svg>
+          </span>
+          <span>优化生成</span>
+        </button>
+      </section>
+
+      <section class="panel result-panel">
+        <div class="result-head">
+          <label for="outputText" class="section-label with-icon section-result">
+            <span class="section-icon" aria-hidden="true">
+              <svg class="ui-icon ui-icon-sm">
+                <use href="#i-sparkle"></use>
+              </svg>
+            </span>
+            <span>优化后的 Prompt</span>
+          </label>
+          <div class="prompt-search inline">
+            <div class="search-input-wrap">
+              <span class="search-leading-icon" aria-hidden="true">
+                <svg class="ui-icon ui-icon-sm">
+                  <use href="#i-search"></use>
+                </svg>
+              </span>
+              <input id="savedPromptSearchInput" type="text" placeholder="搜索已保存提示词（输入名称）" />
+              <button
+                id="clearSavedPromptSearchBtn"
+                class="field-icon-btn search-clear-btn hidden"
+                type="button"
+                aria-label="清空搜索"
+                title="清空搜索"
+              >
+                <svg class="ui-icon ui-icon-sm" aria-hidden="true">
+                  <use href="#i-x"></use>
+                </svg>
+              </button>
+            </div>
+            <div id="savedPromptSearchResults" class="search-results hidden"></div>
+          </div>
+        </div>
+
+        <div class="output-card">
+          <textarea id="outputText" rows="8" placeholder="优化后的提示词会显示在这里"></textarea>
+          <div class="row action-row">
+            <button id="copyBtn" class="btn ghost" type="button">
+              <span class="btn-icon" aria-hidden="true">
+                <svg class="ui-icon ui-icon-sm">
+                  <use href="#i-copy"></use>
+                </svg>
+              </span>
+              <span>一键复制</span>
+            </button>
+            <button id="saveTemplateBtn" class="btn ghost" type="button">
+              <span class="btn-icon" aria-hidden="true">
+                <svg class="ui-icon ui-icon-sm">
+                  <use href="#i-bookmark"></use>
+                </svg>
+              </span>
+              <span>保存该提示词</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <div class="footer-bar">
+        <div class="footer-left">
+          <span class="footer-dot" aria-hidden="true"></span>
+          <span class="footer-label">状态：</span>
+          <span id="status" class="status" aria-live="polite">就绪 ｜ 当前无任务</span>
+        </div>
+        <div class="footer-right">
+          <span class="clock" aria-hidden="true">
+            <svg class="ui-icon ui-icon-sm">
+              <use href="#i-clock"></use>
+            </svg>
+          </span>
+          <span id="updatedAtText">更新于：刚刚</span>
+        </div>
+      </div>
+    </main>
+
+    <div id="aboutBackdrop" class="about-backdrop hidden" aria-hidden="true">
+      <div id="aboutModal" class="about-modal" role="dialog" aria-modal="true" aria-labelledby="aboutTitle" tabindex="-1">
+        <h2 id="aboutTitle">关于 CubeTT</h2>
+        <section class="about-block">
+          <h3>扩展说明</h3>
+          <p id="aboutDescriptionText"></p>
+        </section>
+        <section class="about-block">
+          <h3>作者说明</h3>
+          <p class="about-author-line">
+            <span id="aboutAuthorName"></span>
+            <a id="aboutAuthorLink" href="#" target="_blank" rel="noopener noreferrer"></a>
+          </p>
+        </section>
+      </div>
+    </div>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
