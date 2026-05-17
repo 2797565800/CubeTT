@@ -12,8 +12,8 @@ const MAX_HISTORY = 200;
 const ABOUT_INFO = {
   extensionDescription:
     "输入想法后自动优化为高质量提示词，支持模板复用、本地保存与导出，并可快捷存储和调用 AI 绘画提示词。",
-  authorName: "CubeTT",
-  authorLink: "https://github.com/"
+  authorName: "公众号：是立方体啦",
+  authorLink: "https://github.com/2797565800/CubeTT"
 };
 
 const THEME_PRESETS = {
