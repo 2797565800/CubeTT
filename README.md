@@ -1,3 +1,6 @@
+<img width="1774" height="887" alt="已生1成图像_1" src="https://github.com/user-attachments/assets/9e4e770f-4e4e-4134-8071-262f894bc2c8" />
+
+
 # CubeTT（Chrome 扩展）
 
 输入想法后自动优化为高质量提示词，支持本地保存、搜索、导出，以及 LLM 接口接入。
