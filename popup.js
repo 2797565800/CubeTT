@@ -555,9 +555,27 @@ class ExportService {
     );
   }
 
+  static buildPromptFileName(promptName) {
+    return `${ExportService.sanitizeFileName(promptName)}.json`;
+  }
+
+  static async promptFileExists({ dirHandle, promptName }) {
+    await ExportService.ensurePermission(dirHandle, "read");
+    const fileName = ExportService.buildPromptFileName(promptName);
+    try {
+      await dirHandle.getFileHandle(fileName, { create: false });
+      return true;
+    } catch (error) {
+      if (error?.name === "NotFoundError") {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   static async savePromptToDirectory({ dirHandle, promptName, promptText, scene }) {
     await ExportService.ensurePermission(dirHandle, "readwrite");
-    const fileName = `${ExportService.sanitizeFileName(promptName)}.json`;
+    const fileName = ExportService.buildPromptFileName(promptName);
     const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
     const writable = await fileHandle.createWritable();
     await writable.write(
@@ -1532,15 +1550,51 @@ class PopupController {
         this.setStatus("已取消保存。");
         return;
       }
-      const name = typedName.trim();
-      if (!name) {
+      let chosenName = typedName.trim();
+      if (!chosenName) {
         this.setStatus("提示词名称不能为空。", true);
         return;
       }
 
+      while (true) {
+        const existed = await ExportService.promptFileExists({
+          dirHandle,
+          promptName: chosenName
+        });
+        if (!existed) {
+          break;
+        }
+
+        const fileName = ExportService.buildPromptFileName(chosenName);
+        const shouldOverwrite = window.confirm(
+          `已存在同名提示词文件：${fileName}
+点击“确定”覆盖，点击“取消”改名保存。`
+        );
+        if (shouldOverwrite) {
+          break;
+        }
+
+        const renamed = window.prompt(
+          "请输入新的提示词名称（将保存为新文件）",
+          `${chosenName}-副本`
+        );
+        if (renamed === null) {
+          this.setStatus("已取消保存。");
+          return;
+        }
+
+        const nextName = renamed.trim();
+        if (!nextName) {
+          this.setStatus("提示词名称不能为空。", true);
+          continue;
+        }
+
+        chosenName = nextName;
+      }
+
       const saveResult = await ExportService.savePromptToDirectory({
         dirHandle,
-        promptName: name,
+        promptName: chosenName,
         promptText: sourceText,
         scene: this.sceneSelect.value
       });
@@ -1548,12 +1602,12 @@ class PopupController {
       await this.refreshPromptSavePathView();
 
       const key = await this.templateService.saveTemplate({
-        name,
+        name: chosenName,
         scene: this.sceneSelect.value,
         content: sourceText
       });
       if (this.templateName) {
-        this.templateName.value = name;
+        this.templateName.value = chosenName;
       }
       await this.refreshTemplateOptions(key);
       if (this.templateSelect) {
