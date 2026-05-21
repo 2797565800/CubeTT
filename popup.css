@@ -639,6 +639,24 @@ textarea::placeholder {
   white-space: nowrap;
 }
 
+.path-fix-btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+  border-color: rgba(217, 45, 32, 0.26);
+}
+
+.path-fix-btn:hover {
+  border-color: rgba(217, 45, 32, 0.42);
+}
+
+body.mode-dark .path-fix-btn {
+  border-color: rgba(255, 138, 128, 0.3);
+}
+
+body.mode-dark .path-fix-btn:hover {
+  border-color: rgba(255, 138, 128, 0.5);
+}
+
 .theme-options {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

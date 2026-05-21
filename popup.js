@@ -532,14 +532,36 @@ class ExportService {
     return sanitized || "未命名提示词";
   }
 
-  static async ensurePermission(handle, mode = "readwrite") {
-    if (!handle?.queryPermission || !handle?.requestPermission) return;
-    const queried = await handle.queryPermission({ mode });
-    if (queried === "granted") return;
-    const requested = await handle.requestPermission({ mode });
+  static async getPermissionState(handle, mode = "readwrite") {
+    if (!handle?.queryPermission) return "granted";
+    return handle.queryPermission({ mode });
+  }
+
+  static async ensurePermission(handle, mode = "readwrite", options = {}) {
+    const { requestIfNeeded = true } = options;
+    if (!handle) {
+      throw new Error("目录句柄无效，请重新选择保存目录。");
+    }
+    if (!handle?.queryPermission || !handle?.requestPermission) return "granted";
+
+    const queried = await ExportService.getPermissionState(handle, mode);
+    if (queried === "granted") return queried;
+    if (!requestIfNeeded) return queried;
+
+    let requested = queried;
+    try {
+      requested = await handle.requestPermission({ mode });
+    } catch (error) {
+      if (error?.name === "SecurityError") {
+        throw new Error("目录授权需要手动操作，请点击“保存该提示词”或“导出提示词”后重试。");
+      }
+      throw error;
+    }
+
     if (requested !== "granted") {
       throw new Error("没有目录访问权限，请授权后重试。");
     }
+    return requested;
   }
 
   static buildPromptJson({ promptName, promptText, scene }) {
@@ -589,8 +611,8 @@ class ExportService {
     return { fileName };
   }
 
-  static async listPromptJsonFiles(dirHandle) {
-    await ExportService.ensurePermission(dirHandle, "read");
+  static async listPromptJsonFiles(dirHandle, options = {}) {
+    await ExportService.ensurePermission(dirHandle, "read", options);
     const files = [];
     for await (const [name, handle] of dirHandle.entries()) {
       if (handle.kind === "file" && /\.json$/i.test(name)) {
@@ -699,6 +721,7 @@ class PopupController {
     this.sceneChips = Array.from(document.querySelectorAll(".scene-chip"));
     this.templateSelect = byId("templateSelect");
     this.selectPromptSaveDirBtn = byId("selectPromptSaveDirBtn");
+    this.fixPromptSaveDirBtn = byId("fixPromptSaveDirBtn");
     this.promptSavePathText = byId("promptSavePathText");
     this.inputText = byId("inputText");
     this.inputWordCount = byId("inputWordCount");
@@ -725,6 +748,7 @@ class PopupController {
     this.isAboutOpen = false;
     this.savedPromptSearchCache = [];
     this.promptSaveDirHandle = null;
+    this.eventsBound = false;
   }
 
   setSvgUse(useElement, symbolId) {
@@ -881,13 +905,13 @@ class PopupController {
       return;
     }
     await this.dbService.open();
+    this.bindEvents();
     await this.templateService.ensureSeedData();
     await this.refreshTemplateOptions();
     await this.loadAppearanceSettings();
     await this.loadApiSettings();
     await this.refreshPromptSavePathView();
     this.renderAboutInfo();
-    this.bindEvents();
     this.autoConnectOnStartup();
     this.syncSceneChips(this.sceneSelect.value || "writing");
     this.updateInputCount();
@@ -896,6 +920,8 @@ class PopupController {
   }
 
   bindEvents() {
+    if (this.eventsBound) return;
+    this.eventsBound = true;
     this.modeToggleBtn.addEventListener("click", async () => this.onThemeToggle());
     if (this.helpToggleBtn) {
       this.helpToggleBtn.addEventListener("click", () => this.toggleAboutModal());
@@ -947,6 +973,11 @@ class PopupController {
     if (this.selectPromptSaveDirBtn) {
       this.selectPromptSaveDirBtn.addEventListener("click", async () =>
         this.onSelectPromptSaveDir()
+      );
+    }
+    if (this.fixPromptSaveDirBtn) {
+      this.fixPromptSaveDirBtn.addEventListener("click", async () =>
+        this.onFixPromptSaveDirPermission()
       );
     }
     this.exportBtn.addEventListener("click", async () => this.onExportTemplates());
@@ -1060,28 +1091,51 @@ class PopupController {
     }
   }
 
+  togglePromptSaveDirRepairButton(visible) {
+    if (!this.fixPromptSaveDirBtn) return;
+    this.fixPromptSaveDirBtn.classList.toggle("hidden", !visible);
+  }
+
   async refreshPromptSavePathView() {
     if (!this.promptSavePathText) return;
     const dirHandle = await this.settingsService.getPromptSaveDirHandle();
     this.promptSaveDirHandle = dirHandle || null;
     if (!dirHandle) {
       this.promptSavePathText.textContent = "未设置（请先选择保存目录）";
+      this.togglePromptSaveDirRepairButton(false);
       return;
     }
     const dirName = dirHandle.name || "已授权目录";
     const pathLabel = `/${dirName}`;
-    const files = await ExportService.listPromptJsonFiles(dirHandle);
-    let latestMs = 0;
-    for (const item of files) {
-      try {
-        const file = await item.handle.getFile();
-        latestMs = Math.max(latestMs, file.lastModified || 0);
-      } catch (_error) {
-        // 忽略读取失败文件，继续统计
+    try {
+      const readState = await ExportService.ensurePermission(dirHandle, "read", {
+        requestIfNeeded: false
+      });
+      if (readState !== "granted") {
+        this.promptSavePathText.textContent = `当前目录路径：${pathLabel} ｜ 目录权限已失效，请点击“一键修复目录权限”`;
+        this.togglePromptSaveDirRepairButton(true);
+        return;
       }
+
+      const files = await ExportService.listPromptJsonFiles(dirHandle, {
+        requestIfNeeded: false
+      });
+      let latestMs = 0;
+      for (const item of files) {
+        try {
+          const file = await item.handle.getFile();
+          latestMs = Math.max(latestMs, file.lastModified || 0);
+        } catch (_error) {
+          // 忽略读取失败文件，继续统计
+        }
+      }
+      const latestText = latestMs ? this.formatLocalDateTime(latestMs) : "暂无";
+      this.promptSavePathText.textContent = `当前目录路径：${pathLabel} ｜ 已保存：${files.length} ｜ 最近更新：${latestText}`;
+      this.togglePromptSaveDirRepairButton(false);
+    } catch (_error) {
+      this.promptSavePathText.textContent = `当前目录路径：${pathLabel} ｜ 状态读取失败，请重新选择目录`;
+      this.togglePromptSaveDirRepairButton(true);
     }
-    const latestText = latestMs ? this.formatLocalDateTime(latestMs) : "暂无";
-    this.promptSavePathText.textContent = `当前目录路径：${pathLabel} ｜ 已保存：${files.length} ｜ 最近更新：${latestText}`;
   }
 
   formatLocalDateTime(timestamp) {
@@ -1102,7 +1156,20 @@ class PopupController {
     if (startInHandle) {
       pickerOptions.startIn = startInHandle;
     }
-    const dirHandle = await window.showDirectoryPicker(pickerOptions);
+    let dirHandle;
+    try {
+      dirHandle = await window.showDirectoryPicker(pickerOptions);
+    } catch (error) {
+      const canFallbackWithoutStartIn =
+        !!startInHandle &&
+        (error?.name === "SecurityError" ||
+          error?.name === "TypeError" ||
+          error?.name === "NotFoundError");
+      if (!canFallbackWithoutStartIn) {
+        throw error;
+      }
+      dirHandle = await window.showDirectoryPicker();
+    }
     this.promptSaveDirHandle = dirHandle;
     await this.settingsService.savePromptSaveDirHandle(dirHandle);
     await this.refreshPromptSavePathView();
@@ -1119,6 +1186,19 @@ class PopupController {
         return;
       }
       this.setStatus(`选择保存目录失败：${error.message}`, true);
+    }
+  }
+
+  async onFixPromptSaveDirPermission() {
+    try {
+      await this.pickPromptSaveDir(null);
+      this.setStatus("目录权限已修复，保存目录已更新。");
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        this.setStatus("已取消修复目录权限。");
+        return;
+      }
+      this.setStatus(`修复目录权限失败：${error.message}`, true);
     }
   }
 

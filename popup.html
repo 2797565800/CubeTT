@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CubeTT</title>
+    <link rel="icon" type="image/png" sizes="16x16" href="icons/cubett-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/cubett-32.png" />
+    <link rel="icon" type="image/png" sizes="48x48" href="icons/cubett-48.png" />
+    <link rel="icon" type="image/png" sizes="128x128" href="icons/cubett-128.png" />
+    <link rel="shortcut icon" href="icons/cubett-32.png" />
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
@@ -294,6 +299,14 @@
                   </svg>
                 </span>
                 <span>选择保存目录</span>
+              </button>
+              <button id="fixPromptSaveDirBtn" class="btn ghost path-fix-btn hidden" type="button">
+                <span class="btn-icon" aria-hidden="true">
+                  <svg class="ui-icon ui-icon-sm">
+                    <use href="#i-folder"></use>
+                  </svg>
+                </span>
+                <span>一键修复目录权限</span>
               </button>
             </div>
             <button id="exportBtn" class="btn ghost wide" type="button">
