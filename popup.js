@@ -186,21 +186,42 @@ class IndexedDBService {
   async _withStore(storeName, mode, executor) {
     const db = await this.open();
     return new Promise((resolve, reject) => {
+      let tx;
       let request;
+      let requestResult;
+      let settled = false;
+      const resolveOnce = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const rejectOnce = (error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
       try {
-        const tx = db.transaction(storeName, mode);
+        tx = db.transaction(storeName, mode);
         const store = tx.objectStore(storeName);
         request = executor(store, tx);
       } catch (error) {
         reject(error);
         return;
       }
-      if (!request) {
-        resolve(undefined);
-        return;
-      }
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+
+      tx.oncomplete = () => resolveOnce(request ? requestResult : undefined);
+      tx.onabort = () =>
+        rejectOnce(tx.error || request?.error || new Error("IndexedDB transaction aborted."));
+      tx.onerror = () =>
+        rejectOnce(tx.error || request?.error || new Error("IndexedDB transaction failed."));
+
+      if (!request) return;
+
+      request.onsuccess = () => {
+        requestResult = request.result;
+      };
+      request.onerror = () =>
+        rejectOnce(request.error || tx.error || new Error("IndexedDB request failed."));
     });
   }
 
@@ -395,6 +416,89 @@ class PromptApiClient {
     };
   }
 
+  static isLocalDebugHost(hostname = "") {
+    const host = String(hostname || "").toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  }
+
+  static validateEndpointUrl(endpoint) {
+    let parsed;
+    try {
+      parsed = new URL((endpoint || "").trim());
+    } catch (_error) {
+      throw new Error("API 接口地址格式无效。");
+    }
+
+    if (parsed.protocol === "https:") {
+      return parsed;
+    }
+
+    if (parsed.protocol === "http:" && PromptApiClient.isLocalDebugHost(parsed.hostname)) {
+      return parsed;
+    }
+
+    throw new Error(
+      "为保护 API Key，远程接口必须使用 https://。仅允许 localhost、127.0.0.1、::1 使用 http:// 进行本地调试。"
+    );
+  }
+
+  static resolveCompatibleEndpoint(endpoint) {
+    const parsed = PromptApiClient.validateEndpointUrl(endpoint);
+    const normalizedPath = parsed.pathname.replace(/\/+$/, "");
+    const path = normalizedPath || "/";
+
+    const setPath = (nextPath) => {
+      parsed.pathname = nextPath;
+      return parsed.href;
+    };
+
+    if (/\/responses$/i.test(path) || /\/chat\/completions$/i.test(path)) {
+      return parsed.href;
+    }
+
+    // Auto-map common Anthropic-style paths to OpenAI-compatible chat completions.
+    if (/^\/anthropic(?:\/|$)/i.test(path)) {
+      let remapped = path.replace(/^\/anthropic/i, "");
+      remapped = remapped.replace(/\/v(\d+(?:\.\d+)?)\/messages$/i, "/v$1");
+      remapped = remapped.replace(/\/messages$/i, "");
+      if (!remapped || remapped === "/") {
+        remapped = "/v1";
+      }
+      return setPath(`${remapped}/chat/completions`);
+    }
+
+    // Generic Messages API path -> OpenAI chat completions.
+    if (/\/v(\d+(?:\.\d+)?)\/messages$/i.test(path)) {
+      const remapped = path.replace(/\/messages$/i, "");
+      return setPath(`${remapped}/chat/completions`);
+    }
+    if (/\/messages$/i.test(path)) {
+      const remapped = path.replace(/\/messages$/i, "") || "/v1";
+      return setPath(`${remapped}/chat/completions`);
+    }
+
+    if (path === "/" || /\/v1$/i.test(path)) {
+      const basePath = path === "/" ? "/v1" : path;
+      return setPath(`${basePath}/chat/completions`);
+    }
+
+    // Generic OpenAI-compatible fallback: append chat/completions.
+    return setPath(`${path}/chat/completions`);
+  }
+
+  static createTimeoutSignal(timeoutMs) {
+    const ms = Number(timeoutMs);
+    if (!Number.isFinite(ms) || ms <= 0) {
+      return { signal: undefined, cleanup: () => {} };
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    return {
+      signal: controller.signal,
+      cleanup: () => clearTimeout(timer)
+    };
+  }
+
   static extractTextFromResponse(data) {
     const textDirect = data?.output_text;
     if (typeof textDirect === "string" && textDirect.trim()) {
@@ -435,7 +539,14 @@ class PromptApiClient {
     return "";
   }
 
-  async enhanceWithRemoteModel(payload) {
+  async enhanceWithRemoteModel(payload, options = {}) {
+    const {
+      timeoutMs = 0,
+      maxTokens = 0,
+      skipSystemPrompt = false,
+      temperature = 0.2,
+      requireText = true
+    } = options;
     if (!this.config.endpoint) {
       throw new Error("未配置远程 API endpoint。");
     }
@@ -447,7 +558,7 @@ class PromptApiClient {
       headers.Authorization = `Bearer ${this.config.apiKey}`;
     }
 
-    const endpoint = this.config.endpoint.trim();
+    const endpoint = PromptApiClient.resolveCompatibleEndpoint(this.config.endpoint);
     const isResponsesApi = /\/responses(?:\?|$)/i.test(endpoint);
     const requestBody = isResponsesApi
       ? {
@@ -456,24 +567,47 @@ class PromptApiClient {
         }
       : {
           model: this.config.model,
-          messages: [
-            {
-              role: "system",
-              content: "你是提示词优化专家。请仅输出优化后的中文提示词内容，不要解释。"
-            },
-            {
-              role: "user",
-              content: payload.prompt
-            }
-          ],
-          temperature: 0.2
+          messages: skipSystemPrompt
+            ? [
+                {
+                  role: "user",
+                  content: payload.prompt
+                }
+              ]
+            : [
+                {
+                  role: "system",
+                  content: "你是提示词优化专家。请仅输出优化后的中文提示词内容，不要解释。"
+                },
+                {
+                  role: "user",
+                  content: payload.prompt
+                }
+              ],
+          temperature
         };
 
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(requestBody)
-    });
+    if (!isResponsesApi && Number.isFinite(Number(maxTokens)) && Number(maxTokens) > 0) {
+      requestBody.max_tokens = Math.max(1, Math.floor(Number(maxTokens)));
+    }
+
+    const timeout = PromptApiClient.createTimeoutSignal(timeoutMs);
+    let response;
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(requestBody),
+        ...(timeout.signal ? { signal: timeout.signal } : {})
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error(`连接测试超时（${Math.round(Number(timeoutMs) / 1000)} 秒），请稍后重试。`);
+      }
+      throw error;
+    } finally {
+      timeout.cleanup();
+    }
 
     if (!response.ok) {
       const errorText = (await response.text()).slice(0, 300);
@@ -482,10 +616,10 @@ class PromptApiClient {
 
     const data = await response.json();
     const text = PromptApiClient.extractTextFromResponse(data);
-    if (!text) {
+    if (!text && requireText) {
       throw new Error("远程接口返回成功，但未解析到文本结果。");
     }
-    return text;
+    return text || "";
   }
 }
 
@@ -544,7 +678,19 @@ class ExportService {
     }
     if (!handle?.queryPermission || !handle?.requestPermission) return "granted";
 
-    const queried = await ExportService.getPermissionState(handle, mode);
+    let queried = "prompt";
+    try {
+      queried = await ExportService.getPermissionState(handle, mode);
+    } catch (error) {
+      if (
+        error?.name === "TypeError" ||
+        error?.name === "NotFoundError" ||
+        error?.name === "InvalidStateError"
+      ) {
+        throw new Error("目录句柄无效，请重新选择保存目录。");
+      }
+      throw error;
+    }
     if (queried === "granted") return queried;
     if (!requestIfNeeded) return queried;
 
@@ -552,6 +698,13 @@ class ExportService {
     try {
       requested = await handle.requestPermission({ mode });
     } catch (error) {
+      if (
+        error?.name === "TypeError" ||
+        error?.name === "NotFoundError" ||
+        error?.name === "InvalidStateError"
+      ) {
+        throw new Error("目录句柄无效，请重新选择保存目录。");
+      }
       if (error?.name === "SecurityError") {
         throw new Error("目录授权需要手动操作，请点击“保存该提示词”或“导出提示词”后重试。");
       }
@@ -936,6 +1089,9 @@ class PopupController {
       toggleBtn.addEventListener("click", () => this.toggleSettingsCard(toggleBtn));
     });
     this.saveSettingsBtn.addEventListener("click", async () => this.onSaveSettings());
+    this.apiEndpointInput.addEventListener("input", (event) => this.onApiSettingsFieldInput(event));
+    this.apiKeyInput.addEventListener("input", (event) => this.onApiSettingsFieldInput(event));
+    this.apiModelInput.addEventListener("input", (event) => this.onApiSettingsFieldInput(event));
     this.themeSwatches.forEach((button) => {
       button.addEventListener("click", async () =>
         this.onThemePresetSelect(button.dataset.theme || "")
@@ -1096,9 +1252,12 @@ class PopupController {
     this.fixPromptSaveDirBtn.classList.toggle("hidden", !visible);
   }
 
-  async refreshPromptSavePathView() {
+  async refreshPromptSavePathView(options = {}) {
     if (!this.promptSavePathText) return;
-    const dirHandle = await this.settingsService.getPromptSaveDirHandle();
+    const dirHandle =
+      options.preferredHandle !== undefined
+        ? options.preferredHandle
+        : await this.settingsService.getPromptSaveDirHandle();
     this.promptSaveDirHandle = dirHandle || null;
     if (!dirHandle) {
       this.promptSavePathText.textContent = "未设置（请先选择保存目录）";
@@ -1152,7 +1311,7 @@ class PopupController {
     if (!("showDirectoryPicker" in window)) {
       throw new Error("当前浏览器不支持目录选择，请升级 Chrome 后重试。");
     }
-    const pickerOptions = {};
+    const pickerOptions = { mode: "readwrite" };
     if (startInHandle) {
       pickerOptions.startIn = startInHandle;
     }
@@ -1168,11 +1327,12 @@ class PopupController {
       if (!canFallbackWithoutStartIn) {
         throw error;
       }
-      dirHandle = await window.showDirectoryPicker();
+      dirHandle = await window.showDirectoryPicker({ mode: "readwrite" });
     }
+    await ExportService.ensurePermission(dirHandle, "readwrite");
     this.promptSaveDirHandle = dirHandle;
     await this.settingsService.savePromptSaveDirHandle(dirHandle);
-    await this.refreshPromptSavePathView();
+    await this.refreshPromptSavePathView({ preferredHandle: dirHandle });
     return dirHandle;
   }
 
@@ -1231,19 +1391,125 @@ class PopupController {
     }
   }
 
+  clearApiFieldValidation() {
+    const inputs = [this.apiEndpointInput, this.apiKeyInput, this.apiModelInput];
+    for (const input of inputs) {
+      if (!input?.setCustomValidity) continue;
+      input.setCustomValidity("");
+    }
+  }
+
+  clearSingleApiFieldValidation(input) {
+    if (!input?.setCustomValidity) return;
+    input.setCustomValidity("");
+  }
+
+  showApiValidationPopup({ input = null, message = "接口配置填写有误。", useNativeBubble = true }) {
+    const tip = message || "接口配置填写有误。";
+    this.setStatus(tip, true);
+
+    if (input?.focus) {
+      input.focus();
+      if (typeof input.select === "function" && input.type !== "password") {
+        input.select();
+      }
+    }
+
+    if (useNativeBubble && input?.setCustomValidity && input?.reportValidity) {
+      input.setCustomValidity(tip);
+      input.reportValidity();
+      return;
+    }
+
+    window.alert(`接口配置错误：\n${tip}`);
+  }
+
+  validateApiSettingsInputs({ endpoint, apiKey, model }) {
+    if (apiKey && /\s/.test(apiKey)) {
+      return {
+        input: this.apiKeyInput,
+        message: "API Key 中包含空格或换行，请重新粘贴纯净的 Key。"
+      };
+    }
+
+    if (!endpoint) {
+      return null;
+    }
+
+    try {
+      PromptApiClient.resolveCompatibleEndpoint(endpoint);
+    } catch (error) {
+      return {
+        input: this.apiEndpointInput,
+        message: error?.message || "API 接口地址格式无效。"
+      };
+    }
+
+    if (!model) {
+      return {
+        input: this.apiModelInput,
+        message: "模型名称不能为空。"
+      };
+    }
+
+    return null;
+  }
+
+  diagnoseApiConnectionError(error) {
+    const raw = (error?.message || "").toLowerCase();
+    if (/timeout|timed out|超时/.test(raw)) {
+      return {
+        input: this.apiEndpointInput,
+        message: "连接测试超时（8 秒）。接口已保存，你可以直接使用，或稍后重试测试。"
+      };
+    }
+    if (/401|403|unauthorized|authentication|invalid api key|api key/.test(raw)) {
+      return {
+        input: this.apiKeyInput,
+        message: "连接失败：API Key 可能错误、过期或无权限。请检查 API Key。"
+      };
+    }
+    if (/404|not found|endpoint/.test(raw)) {
+      return {
+        input: this.apiEndpointInput,
+        message: "连接失败：API 接口地址可能填错（路径不存在）。请检查 endpoint。"
+      };
+    }
+    if (/model|does not exist|not supported|unsupported/.test(raw)) {
+      return {
+        input: this.apiModelInput,
+        message: "连接失败：模型名称可能填错或该接口不支持此模型。"
+      };
+    }
+    return {
+      input: null,
+      message: `连接测试失败：${this.toShortErrorMessage(error)}`
+    };
+  }
+
+  onApiSettingsFieldInput(event) {
+    this.clearSingleApiFieldValidation(event?.target);
+  }
+
   async onSaveSettings() {
     const endpoint = this.apiEndpointInput.value.trim();
     const apiKey = this.apiKeyInput.value.trim();
-    const model = this.apiModelInput.value.trim() || "gpt-4";
+    const modelInput = this.apiModelInput.value.trim();
+    const model = modelInput || "gpt-4";
 
-    if (endpoint) {
-      try {
-        // 校验 URL 基本格式，避免保存明显无效地址。
-        new URL(endpoint);
-      } catch (_error) {
-        this.setStatus("API 接口地址格式无效。", true);
-        return;
-      }
+    this.clearApiFieldValidation();
+    const validationIssue = this.validateApiSettingsInputs({
+      endpoint,
+      apiKey,
+      model: modelInput || model
+    });
+    if (validationIssue) {
+      this.showApiValidationPopup({
+        input: validationIssue.input,
+        message: validationIssue.message,
+        useNativeBubble: true
+      });
+      return;
     }
 
     const config = { endpoint, apiKey, model };
@@ -1264,10 +1530,12 @@ class PopupController {
       this.setStatus("接口设置已保存，连接测试通过。");
     } catch (error) {
       this.setLlmConnectionStatus("disconnected");
-      this.setStatus(
-        `接口已保存，但连接失败：${this.toShortErrorMessage(error)}`,
-        true
-      );
+      const diagnostic = this.diagnoseApiConnectionError(error);
+      this.showApiValidationPopup({
+        input: diagnostic.input,
+        message: diagnostic.message,
+        useNativeBubble: !!diagnostic.input
+      });
     }
   }
 
@@ -1278,11 +1546,17 @@ class PopupController {
       );
     }
 
-    const probePrompt = "连接测试：请仅回复“连接成功”。";
+    const probePrompt = "ping";
     await this.apiClient.enhanceWithRemoteModel({
       input: probePrompt,
       scene: "workplace",
       prompt: probePrompt
+    }, {
+      timeoutMs: 8000,
+      maxTokens: 8,
+      skipSystemPrompt: true,
+      temperature: 0,
+      requireText: false
     });
   }
 
@@ -1294,7 +1568,15 @@ class PopupController {
         return "当前是 file:// 页面，跨域请求会被拦截。请从 chrome://extensions 打开扩展再测。";
       }
       if (endpoint.startsWith("http://")) {
-        return "接口是 http://，浏览器安全策略可能拦截。请改为 https://。";
+        try {
+          const parsed = new URL(endpoint);
+          if (PromptApiClient.isLocalDebugHost(parsed.hostname)) {
+            return "本地调试地址请求失败。请确认本地服务已启动，并检查端口与 CORS 配置。";
+          }
+        } catch (_error) {
+          // 忽略 URL 解析异常，走默认提示。
+        }
+        return "为保护 API Key，远程接口必须使用 https://。";
       }
       return "网络或 CORS 拦截。请确认接口允许浏览器跨域，必要时使用后端中转。";
     }
@@ -1621,6 +1903,7 @@ class PopupController {
         this.setStatus("首次保存需要先选择保存目录...");
         dirHandle = await this.pickPromptSaveDir(this.promptSaveDirHandle);
       }
+      await ExportService.ensurePermission(dirHandle, "readwrite");
 
       const defaultName = this.templateName
         ? this.templateName.value.trim() || this.buildAutoTemplateName()
@@ -1679,7 +1962,7 @@ class PopupController {
         scene: this.sceneSelect.value
       });
 
-      await this.refreshPromptSavePathView();
+      await this.refreshPromptSavePathView({ preferredHandle: dirHandle });
 
       const key = await this.templateService.saveTemplate({
         name: chosenName,
