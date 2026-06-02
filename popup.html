@@ -317,6 +317,14 @@
               </span>
               <span>导出全部提示词</span>
             </button>
+            <button id="mergePromptLibraryBtn" class="btn ghost wide" type="button">
+              <span class="btn-icon" aria-hidden="true">
+                <svg class="ui-icon ui-icon-sm">
+                  <use href="#i-folder"></use>
+                </svg>
+              </span>
+              <span>导入并合并另一词库</span>
+            </button>
           </div>
         </article>
       </section>
@@ -376,14 +384,34 @@
             </span>
             <span>优化后的 Prompt</span>
           </label>
-          <div class="prompt-search inline">
+          <button
+            id="libraryToggleBtn"
+            class="btn ghost library-launch-btn"
+            type="button"
+            aria-expanded="false"
+            aria-label="打开提示词库"
+            title="提示词库"
+          >
+            <span class="btn-icon" aria-hidden="true">
+              <svg class="ui-icon ui-icon-sm">
+                <use href="#i-folder"></use>
+              </svg>
+            </span>
+            <span>提示词库</span>
+          </button>
+          <div class="prompt-search inline prompt-library">
+            <div class="library-tabs" role="tablist" aria-label="提示词库筛选">
+              <button class="library-tab" type="button" data-filter="favorite">收藏</button>
+              <button class="library-tab" type="button" data-filter="recent">最近</button>
+              <button class="library-tab active" type="button" data-filter="all">全部</button>
+            </div>
             <div class="search-input-wrap">
               <span class="search-leading-icon" aria-hidden="true">
                 <svg class="ui-icon ui-icon-sm">
                   <use href="#i-search"></use>
                 </svg>
               </span>
-              <input id="savedPromptSearchInput" type="text" placeholder="搜索已保存提示词（输入名称）" />
+              <input id="savedPromptSearchInput" type="text" placeholder="搜索名称或内容关键字" />
               <button
                 id="clearSavedPromptSearchBtn"
                 class="field-icon-btn search-clear-btn hidden"
@@ -396,7 +424,7 @@
                 </svg>
               </button>
             </div>
-            <div id="savedPromptSearchResults" class="search-results hidden"></div>
+            <div id="savedPromptSearchResults" class="search-results library-results"></div>
           </div>
         </div>
 
@@ -443,6 +471,7 @@
     <div id="aboutBackdrop" class="about-backdrop hidden" aria-hidden="true">
       <div id="aboutModal" class="about-modal" role="dialog" aria-modal="true" aria-labelledby="aboutTitle" tabindex="-1">
         <h2 id="aboutTitle">关于 CubeTT</h2>
+        <p id="aboutVersionText" class="about-version hidden"></p>
         <section class="about-block">
           <h3>扩展说明</h3>
           <p id="aboutDescriptionText"></p>
@@ -454,6 +483,36 @@
             <a id="aboutAuthorLink" href="#" target="_blank" rel="noopener noreferrer"></a>
           </p>
         </section>
+      </div>
+    </div>
+
+    <div id="libraryBackdrop" class="about-backdrop library-backdrop hidden" aria-hidden="true">
+      <div
+        id="libraryModal"
+        class="about-modal library-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="libraryTitle"
+        tabindex="-1"
+      >
+        <div class="library-modal-head">
+          <div class="library-modal-copy">
+            <h2 id="libraryTitle">提示词库</h2>
+            <p class="library-modal-subtitle">收藏、最近和全部提示词都在这里。</p>
+          </div>
+          <button
+            id="libraryCloseBtn"
+            class="icon-btn library-modal-close"
+            type="button"
+            aria-label="关闭提示词库"
+            title="关闭"
+          >
+            <svg class="ui-icon ui-icon-md" aria-hidden="true">
+              <use href="#i-x"></use>
+            </svg>
+          </button>
+        </div>
+        <div id="libraryMount" class="library-mount"></div>
       </div>
     </div>
 

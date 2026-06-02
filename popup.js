@@ -8,6 +8,8 @@ const KEY_EXPORT_DIR_HANDLE = "export_dir_handle";
 const KEY_PROMPT_SAVE_DIR_HANDLE = "prompt_save_dir_handle";
 const KEY_THEME_MODE = "theme_mode";
 const KEY_THEME_PRESET = "theme_preset";
+const KEY_PROMPT_FAVORITES = "prompt_favorites";
+const PROMPT_LIBRARY_META_FILE = "CubeTT.library.json";
 const MAX_HISTORY = 200;
 const ABOUT_INFO = {
   extensionDescription:
@@ -396,6 +398,18 @@ class SettingsService {
   async getPromptSaveDirHandle() {
     return this.getValue(KEY_PROMPT_SAVE_DIR_HANDLE);
   }
+
+  async savePromptFavorites(favoritesMap) {
+    const payload =
+      favoritesMap && typeof favoritesMap === "object" ? favoritesMap : {};
+    return this.setValue(KEY_PROMPT_FAVORITES, payload);
+  }
+
+  async getPromptFavorites() {
+    const data = await this.getValue(KEY_PROMPT_FAVORITES);
+    if (!data || typeof data !== "object") return {};
+    return data;
+  }
 }
 
 // API 占位模块：未来可替换为 GPT-4/其他模型调用。
@@ -666,6 +680,44 @@ class ExportService {
     return sanitized || "未命名提示词";
   }
 
+  static createEmptyPromptLibraryMeta() {
+    return {
+      version: 1,
+      favorites: {}
+    };
+  }
+
+  static normalizePromptLibraryMeta(data) {
+    const fallback = ExportService.createEmptyPromptLibraryMeta();
+    if (!data || typeof data !== "object") {
+      return fallback;
+    }
+    const favorites = {};
+    const rawFavorites =
+      data.favorites && typeof data.favorites === "object" ? data.favorites : {};
+    for (const [key, value] of Object.entries(rawFavorites)) {
+      const normalizedKey = String(key || "").trim();
+      const normalizedValue = String(value || "").trim();
+      if (!normalizedKey || !normalizedValue) continue;
+      favorites[normalizedKey] = normalizedValue;
+    }
+    return {
+      version: 1,
+      favorites
+    };
+  }
+
+  static buildPromptLibraryMetaJson(data) {
+    return JSON.stringify(ExportService.normalizePromptLibraryMeta(data), null, 2);
+  }
+
+  static isPromptLibraryMetaFile(fileName) {
+    return (
+      String(fileName || "").trim().toLowerCase() ===
+      PROMPT_LIBRARY_META_FILE.toLowerCase()
+    );
+  }
+
   static async getPermissionState(handle, mode = "readwrite") {
     if (!handle?.queryPermission) return "granted";
     return handle.queryPermission({ mode });
@@ -734,6 +786,43 @@ class ExportService {
     return `${ExportService.sanitizeFileName(promptName)}.json`;
   }
 
+  static async readPromptLibraryMeta(dirHandle, options = {}) {
+    await ExportService.ensurePermission(dirHandle, "read", options);
+    try {
+      const fileHandle = await dirHandle.getFileHandle(PROMPT_LIBRARY_META_FILE, {
+        create: false
+      });
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch (_error) {
+        throw new Error("词库收藏数据文件损坏，已按空收藏处理。");
+      }
+      return ExportService.normalizePromptLibraryMeta(parsed);
+    } catch (error) {
+      if (error?.name === "NotFoundError") {
+        return null;
+      }
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error("词库收藏数据读取失败，已按空收藏处理。");
+    }
+  }
+
+  static async savePromptLibraryMeta(dirHandle, data) {
+    await ExportService.ensurePermission(dirHandle, "readwrite");
+    const fileHandle = await dirHandle.getFileHandle(PROMPT_LIBRARY_META_FILE, {
+      create: true
+    });
+    const writable = await fileHandle.createWritable();
+    await writable.write(ExportService.buildPromptLibraryMetaJson(data));
+    await writable.close();
+    return { fileName: PROMPT_LIBRARY_META_FILE };
+  }
+
   static async promptFileExists({ dirHandle, promptName }) {
     await ExportService.ensurePermission(dirHandle, "read");
     const fileName = ExportService.buildPromptFileName(promptName);
@@ -764,11 +853,24 @@ class ExportService {
     return { fileName };
   }
 
+  static async writePromptFileToDirectory({ dirHandle, fileName, text }) {
+    await ExportService.ensurePermission(dirHandle, "readwrite");
+    const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(String(text || ""));
+    await writable.close();
+    return { fileName };
+  }
+
   static async listPromptJsonFiles(dirHandle, options = {}) {
     await ExportService.ensurePermission(dirHandle, "read", options);
     const files = [];
     for await (const [name, handle] of dirHandle.entries()) {
-      if (handle.kind === "file" && /\.json$/i.test(name)) {
+      if (
+        handle.kind === "file" &&
+        /\.json$/i.test(name) &&
+        !ExportService.isPromptLibraryMetaFile(name)
+      ) {
         files.push({ name, handle });
       }
     }
@@ -855,6 +957,11 @@ class PopupController {
     this.appRoot = document.querySelector("main.app");
     this.aboutBackdrop = byId("aboutBackdrop");
     this.aboutModal = byId("aboutModal");
+    this.libraryToggleBtn = byId("libraryToggleBtn");
+    this.libraryBackdrop = byId("libraryBackdrop");
+    this.libraryModal = byId("libraryModal");
+    this.libraryCloseBtn = byId("libraryCloseBtn");
+    this.aboutVersionText = byId("aboutVersionText");
     this.aboutDescriptionText = byId("aboutDescriptionText");
     this.aboutAuthorName = byId("aboutAuthorName");
     this.aboutAuthorLink = byId("aboutAuthorLink");
@@ -882,16 +989,22 @@ class PopupController {
     this.savedPromptSearchInput = byId("savedPromptSearchInput");
     this.savedPromptSearchResults = byId("savedPromptSearchResults");
     this.clearSavedPromptSearchBtn = byId("clearSavedPromptSearchBtn");
+    this.promptLibrary = document.querySelector(".prompt-library");
+    this.libraryMount = byId("libraryMount");
+    this.savedPromptFilterBtns = Array.from(
+      document.querySelectorAll(".library-tab")
+    );
     this.templateName = byId("templateName");
     this.status = byId("status");
     this.updatedAtText = byId("updatedAtText");
     this.optimizeBtn = byId("optimizeBtn");
     this.optimizeBtnIcon = byId("optimizeBtnIcon");
-    this.optimizeBtnText = this.optimizeBtn.querySelector("span:last-child");
+    this.optimizeBtnText = this.optimizeBtn?.querySelector("span:last-child") || null;
     this.copyBtn = byId("copyBtn");
     this.saveTemplateBtn = byId("saveTemplateBtn");
     this.deleteTemplateBtn = byId("deleteTemplateBtn");
     this.exportBtn = byId("exportBtn");
+    this.mergePromptLibraryBtn = byId("mergePromptLibraryBtn");
 
     this.themeMode = "light";
     this.themePreset = "ocean";
@@ -899,7 +1012,12 @@ class PopupController {
       new URLSearchParams(window.location.search).get("detached") === "1";
     this.isOptimizing = false;
     this.isAboutOpen = false;
+    this.isLibraryOpen = false;
+    this.savedPromptFilter = "all";
     this.savedPromptSearchCache = [];
+    this.promptFavoritesMap = {};
+    this.promptLibraryMetaError = "";
+    this.lastPromptLibraryMetaError = "";
     this.promptSaveDirHandle = null;
     this.eventsBound = false;
   }
@@ -1053,11 +1171,18 @@ class PopupController {
     }
   }
 
+  mountPromptLibraryPanel() {
+    if (!this.promptLibrary || !this.libraryMount) return;
+    if (this.promptLibrary.parentElement === this.libraryMount) return;
+    this.libraryMount.appendChild(this.promptLibrary);
+  }
+
   async init() {
     if (await this.autoDetachFromActionPopupIfNeeded()) {
       return;
     }
     await this.dbService.open();
+    this.mountPromptLibraryPanel();
     this.bindEvents();
     await this.templateService.ensureSeedData();
     await this.refreshTemplateOptions();
@@ -1069,6 +1194,7 @@ class PopupController {
     this.syncSceneChips(this.sceneSelect.value || "writing");
     this.updateInputCount();
     this.updateSearchClearButtonVisibility();
+    await this.refreshSavedPromptLibrary();
     this.updateUpdatedAtText();
   }
 
@@ -1081,6 +1207,17 @@ class PopupController {
     }
     if (this.aboutBackdrop) {
       this.aboutBackdrop.addEventListener("click", (event) => this.onAboutBackdropClick(event));
+    }
+    if (this.libraryToggleBtn) {
+      this.libraryToggleBtn.addEventListener("click", async () => this.toggleLibraryModal());
+    }
+    if (this.libraryBackdrop) {
+      this.libraryBackdrop.addEventListener("click", (event) =>
+        this.onLibraryBackdropClick(event)
+      );
+    }
+    if (this.libraryCloseBtn) {
+      this.libraryCloseBtn.addEventListener("click", () => this.closeLibraryModal());
     }
     document.addEventListener("keydown", (event) => this.onGlobalKeyDown(event));
     this.toggleApiKeyBtn.addEventListener("click", () => this.onToggleApiKeyVisibility());
@@ -1114,9 +1251,18 @@ class PopupController {
     this.savedPromptSearchInput.addEventListener("input", async () =>
       this.onSavedPromptSearchInput()
     );
+    this.savedPromptSearchInput.addEventListener("focus", async () =>
+      this.refreshSavedPromptLibrary()
+    );
     this.clearSavedPromptSearchBtn.addEventListener("click", () =>
       this.onClearSavedPromptSearch()
     );
+    this.savedPromptFilterBtns.forEach((button) => {
+      button.addEventListener("click", async () => {
+        const filter = button.dataset.filter || "all";
+        await this.onSavedPromptFilterChange(filter);
+      });
+    });
     if (this.templateSelect) {
       this.templateSelect.addEventListener("change", async () => this.onTemplateSelected());
     }
@@ -1137,9 +1283,39 @@ class PopupController {
       );
     }
     this.exportBtn.addEventListener("click", async () => this.onExportTemplates());
+    if (this.mergePromptLibraryBtn) {
+      this.mergePromptLibraryBtn.addEventListener("click", async () =>
+        this.onMergePromptLibrary()
+      );
+    }
+  }
+
+  getExtensionVersion() {
+    try {
+      if (typeof chrome === "undefined" || !chrome?.runtime?.getManifest) {
+        return "";
+      }
+      const manifest = chrome.runtime.getManifest();
+      const version =
+        typeof manifest?.version === "string" ? manifest.version.trim() : "";
+      return version;
+    } catch (_error) {
+      return "";
+    }
   }
 
   renderAboutInfo() {
+    if (this.aboutVersionText) {
+      const version = this.getExtensionVersion();
+      if (version) {
+        this.aboutVersionText.textContent = `v${version}`;
+        this.aboutVersionText.classList.remove("hidden");
+      } else {
+        this.aboutVersionText.textContent = "";
+        this.aboutVersionText.classList.add("hidden");
+      }
+    }
+
     if (this.aboutDescriptionText) {
       this.aboutDescriptionText.textContent = ABOUT_INFO.extensionDescription || "";
     }
@@ -1173,6 +1349,9 @@ class PopupController {
 
   openAboutModal() {
     if (!this.aboutBackdrop || !this.aboutModal) return;
+    if (this.isLibraryOpen) {
+      this.closeLibraryModal();
+    }
     this.isAboutOpen = true;
     this.aboutBackdrop.classList.remove("hidden");
     this.aboutBackdrop.setAttribute("aria-hidden", "false");
@@ -1192,6 +1371,42 @@ class PopupController {
     }
   }
 
+  async toggleLibraryModal(forceOpen) {
+    const shouldOpen =
+      typeof forceOpen === "boolean" ? forceOpen : !this.isLibraryOpen;
+    if (shouldOpen) {
+      await this.openLibraryModal();
+      return;
+    }
+    this.closeLibraryModal();
+  }
+
+  async openLibraryModal() {
+    if (!this.libraryBackdrop || !this.libraryModal) return;
+    if (this.isAboutOpen) {
+      this.closeAboutModal();
+    }
+    this.isLibraryOpen = true;
+    this.libraryBackdrop.classList.remove("hidden");
+    this.libraryBackdrop.setAttribute("aria-hidden", "false");
+    if (this.libraryToggleBtn) {
+      this.libraryToggleBtn.setAttribute("aria-expanded", "true");
+    }
+    await this.refreshSavedPromptLibrary();
+    this.libraryModal.focus();
+    this.savedPromptSearchInput?.focus();
+  }
+
+  closeLibraryModal() {
+    if (!this.libraryBackdrop) return;
+    this.isLibraryOpen = false;
+    this.libraryBackdrop.classList.add("hidden");
+    this.libraryBackdrop.setAttribute("aria-hidden", "true");
+    if (this.libraryToggleBtn) {
+      this.libraryToggleBtn.setAttribute("aria-expanded", "false");
+    }
+  }
+
   onAboutBackdropClick(event) {
     if (!this.isAboutOpen || !this.aboutBackdrop) return;
     if (event.target === this.aboutBackdrop) {
@@ -1199,8 +1414,20 @@ class PopupController {
     }
   }
 
+  onLibraryBackdropClick(event) {
+    if (!this.isLibraryOpen || !this.libraryBackdrop) return;
+    if (event.target === this.libraryBackdrop) {
+      this.closeLibraryModal();
+    }
+  }
+
   onGlobalKeyDown(event) {
-    if (event.key === "Escape" && this.isAboutOpen) {
+    if (event.key !== "Escape") return;
+    if (this.isLibraryOpen) {
+      this.closeLibraryModal();
+      return;
+    }
+    if (this.isAboutOpen) {
       this.closeAboutModal();
     }
   }
@@ -1208,6 +1435,9 @@ class PopupController {
   toggleSettingsPanel() {
     if (this.isAboutOpen) {
       this.closeAboutModal();
+    }
+    if (this.isLibraryOpen) {
+      this.closeLibraryModal();
     }
     const willOpen = this.settingsPanel.classList.contains("hidden");
     this.settingsPanel.classList.toggle("hidden");
@@ -1339,6 +1569,7 @@ class PopupController {
   async onSelectPromptSaveDir() {
     try {
       await this.pickPromptSaveDir(this.promptSaveDirHandle);
+      await this.refreshSavedPromptLibrary();
       this.setStatus("提示词保存目录已更新。");
     } catch (error) {
       if (error?.name === "AbortError") {
@@ -1352,6 +1583,7 @@ class PopupController {
   async onFixPromptSaveDirPermission() {
     try {
       await this.pickPromptSaveDir(null);
+      await this.refreshSavedPromptLibrary();
       this.setStatus("目录权限已修复，保存目录已更新。");
     } catch (error) {
       if (error?.name === "AbortError") {
@@ -1634,49 +1866,477 @@ class PopupController {
   }
 
   clearSearchResults() {
+    if (!this.savedPromptSearchResults) return;
     this.savedPromptSearchResults.innerHTML = "";
-    this.savedPromptSearchResults.classList.add("hidden");
   }
 
   updateSearchClearButtonVisibility() {
+    if (!this.savedPromptSearchInput || !this.clearSavedPromptSearchBtn) return;
     const hasText = !!this.savedPromptSearchInput.value.trim();
     this.clearSavedPromptSearchBtn.classList.toggle("hidden", !hasText);
   }
 
+  normalizePromptName(name) {
+    return String(name || "")
+      .trim()
+      .toLowerCase();
+  }
+
+  normalizeFileName(fileName) {
+    return String(fileName || "")
+      .trim()
+      .toLowerCase();
+  }
+
+  getPromptDisplayNameFromFile(fileName) {
+    return String(fileName || "")
+      .replace(/\.json$/i, "")
+      .trim();
+  }
+
+  hashText(value) {
+    const text = String(value || "");
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
+  }
+
+  buildPromptEntityId({ savedAt, prompt, fileName } = {}) {
+    const normalizedSavedAt = String(savedAt || "").trim();
+    const normalizedPrompt = String(prompt || "");
+    if (normalizedSavedAt && normalizedPrompt) {
+      return `sp:${this.hashText(`${normalizedSavedAt}\n${normalizedPrompt}`)}`;
+    }
+    if (normalizedSavedAt) {
+      return `s:${normalizedSavedAt}`;
+    }
+    const normalizedFile = this.normalizeFileName(fileName);
+    if (normalizedFile) {
+      return `f:${normalizedFile}`;
+    }
+    return "unknown";
+  }
+
+  buildPromptFavoriteKey(item = {}) {
+    const entityId = String(item.entityId || "").trim();
+    if (entityId) {
+      return `id:${entityId}`;
+    }
+    const normalizedFile = this.normalizeFileName(item.fileName);
+    if (normalizedFile) {
+      return `file:${normalizedFile}`;
+    }
+    return `name:${this.normalizePromptName(item.displayName || item.jsonName)}`;
+  }
+
+  buildLegacyPromptFavoriteKeys({ fileName, jsonName } = {}) {
+    const keys = [];
+    const normalizedFile = this.normalizeFileName(fileName);
+    if (normalizedFile) {
+      keys.push(`file:${normalizedFile}`);
+    }
+    const normalizedJsonName = this.normalizePromptName(jsonName);
+    if (normalizedJsonName) {
+      keys.push(`name:${normalizedJsonName}`);
+      const sanitizedJsonFileName = `${ExportService.sanitizeFileName(
+        String(jsonName).trim()
+      )}.json`;
+      const normalizedJsonFile = this.normalizeFileName(sanitizedJsonFileName);
+      if (normalizedJsonFile) {
+        keys.push(`file:${normalizedJsonFile}`);
+      }
+    }
+    return [...new Set(keys)];
+  }
+
+  resolvePromptFavoriteState(primaryKey, legacyKeys, sourceMap = {}) {
+    const keys = [primaryKey, ...legacyKeys].filter(Boolean);
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(sourceMap, key)) continue;
+      const rawValue = sourceMap[key];
+      if (typeof rawValue === "string" && rawValue.trim()) {
+        return { key, favoriteAt: rawValue.trim() };
+      }
+      if (rawValue) {
+        return { key, favoriteAt: nowISO() };
+      }
+    }
+    return { key: "", favoriteAt: "" };
+  }
+
+  buildPromptLibraryMetaPayload(favoritesMap = {}) {
+    return ExportService.normalizePromptLibraryMeta({
+      version: 1,
+      favorites: favoritesMap
+    });
+  }
+
+  async savePromptFavoritesToLibrary(favoritesMap = {}) {
+    if (!this.promptSaveDirHandle) {
+      throw new Error("请先选择提示词保存目录。");
+    }
+    const meta = this.buildPromptLibraryMetaPayload(favoritesMap);
+    await ExportService.savePromptLibraryMeta(this.promptSaveDirHandle, meta);
+    this.promptFavoritesMap = meta.favorites;
+  }
+
+  buildPromptMergeFingerprint({ savedAt, updatedAt, prompt, fileName } = {}) {
+    const normalizedTime = String(savedAt || updatedAt || "").trim();
+    const normalizedPrompt = String(prompt || "");
+    if (normalizedTime && normalizedPrompt) {
+      return `sp:${this.hashText(`${normalizedTime}\n${normalizedPrompt}`)}`;
+    }
+    if (normalizedPrompt) {
+      return `p:${this.hashText(normalizedPrompt)}`;
+    }
+    if (normalizedTime) {
+      return `s:${normalizedTime}`;
+    }
+    const normalizedFile = this.normalizeFileName(fileName);
+    if (normalizedFile) {
+      return `f:${normalizedFile}`;
+    }
+    return "unknown";
+  }
+
+  buildImportedPromptFileName(baseName, attempt = 0) {
+    const safeBase = ExportService.sanitizeFileName(
+      String(baseName || "导入提示词").trim() || "导入提示词"
+    );
+    if (attempt <= 0) {
+      return `${safeBase}-导入.json`;
+    }
+    return `${safeBase}-导入-${attempt + 1}.json`;
+  }
+
+  getUniquePromptImportFileName({
+    desiredFileName,
+    displayName,
+    usedFileNames = new Set()
+  } = {}) {
+    const normalizedDesired = this.normalizeFileName(desiredFileName);
+    if (normalizedDesired && !usedFileNames.has(normalizedDesired)) {
+      return {
+        fileName: desiredFileName,
+        renamed: false
+      };
+    }
+
+    const baseName =
+      String(displayName || "").trim() ||
+      this.getPromptDisplayNameFromFile(desiredFileName) ||
+      "导入提示词";
+    let attempt = 0;
+    let candidate = this.buildImportedPromptFileName(baseName, attempt);
+    while (usedFileNames.has(this.normalizeFileName(candidate))) {
+      attempt += 1;
+      candidate = this.buildImportedPromptFileName(baseName, attempt);
+    }
+    return {
+      fileName: candidate,
+      renamed: true
+    };
+  }
+
+  async isSameDirectoryHandle(leftHandle, rightHandle) {
+    if (!leftHandle || !rightHandle) return false;
+    if (typeof leftHandle.isSameEntry === "function") {
+      try {
+        return await leftHandle.isSameEntry(rightHandle);
+      } catch (_error) {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  async readPromptItemsFromDirectory(dirHandle, options = {}) {
+    const files = await ExportService.listPromptJsonFiles(dirHandle, options);
+    const items = [];
+    let invalidCount = 0;
+
+    for (const item of files) {
+      try {
+        const file = await item.handle.getFile();
+        const rawText = await file.text();
+        const parsed = JSON.parse(rawText);
+        const prompt =
+          typeof parsed?.prompt === "string" ? parsed.prompt : "";
+        const jsonName =
+          typeof parsed?.name === "string" && parsed.name.trim()
+            ? parsed.name.trim()
+            : "";
+        const savedAt =
+          typeof parsed?.savedAt === "string" && parsed.savedAt.trim()
+            ? parsed.savedAt.trim()
+            : "";
+        const scene =
+          typeof parsed?.scene === "string" && SCENE_CONFIG[parsed.scene]
+            ? parsed.scene
+            : "writing";
+        const updatedAt =
+          savedAt ||
+          (file?.lastModified
+            ? new Date(file.lastModified).toISOString()
+            : nowISO());
+        const displayName =
+          this.getPromptDisplayNameFromFile(item.name) ||
+          jsonName ||
+          item.name.replace(/\.json$/i, "");
+        const entityId = this.buildPromptEntityId({
+          savedAt,
+          prompt,
+          fileName: item.name
+        });
+
+        items.push({
+          fileName: item.name,
+          handle: item.handle,
+          rawText,
+          parsed,
+          prompt,
+          jsonName,
+          displayName,
+          savedAt,
+          updatedAt,
+          scene,
+          entityId,
+          mergeFingerprint: this.buildPromptMergeFingerprint({
+            savedAt,
+            updatedAt,
+            prompt,
+            fileName: item.name
+          })
+        });
+      } catch (_error) {
+        invalidCount += 1;
+      }
+    }
+
+    return {
+      items,
+      invalidCount
+    };
+  }
+
+  toTimeMs(value) {
+    const ms = Date.parse(value || "");
+    return Number.isFinite(ms) ? ms : 0;
+  }
+
+  getSceneLabel(scene) {
+    return SCENE_CONFIG[scene]?.label || "通用";
+  }
+
+  formatPromptTime(value) {
+    const ms = this.toTimeMs(value);
+    if (!ms) return "未知时间";
+    const date = new Date(ms);
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+    const hh = String(date.getHours()).padStart(2, "0");
+    const mi = String(date.getMinutes()).padStart(2, "0");
+    return `${mm}-${dd} ${hh}:${mi}`;
+  }
+
+  getPromptPreview(prompt) {
+    const normalized = String(prompt || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!normalized) return "空内容";
+    return normalized.slice(0, 140);
+  }
+
+  updateSavedPromptFilterButtons() {
+    this.savedPromptFilterBtns.forEach((button) => {
+      const active = button.dataset.filter === this.savedPromptFilter;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  getFilteredSavedPromptItems(keyword) {
+    const text = String(keyword || "").trim().toLowerCase();
+    let items = [...this.savedPromptSearchCache];
+
+    if (this.savedPromptFilter === "favorite") {
+      items = items
+        .filter((item) => item.isFavorite)
+        .sort(
+          (a, b) =>
+            this.toTimeMs(b.favoriteAt || b.updatedAt) -
+            this.toTimeMs(a.favoriteAt || a.updatedAt)
+        );
+    } else {
+      items = items.sort(
+        (a, b) => this.toTimeMs(b.updatedAt) - this.toTimeMs(a.updatedAt)
+      );
+      if (this.savedPromptFilter === "recent") {
+        items = items.slice(0, 20);
+      }
+    }
+
+    if (!text) return items;
+
+    return items.filter((item) => {
+      const name = String(item.displayName || "").toLowerCase();
+      return name.includes(text);
+    });
+  }
+
   renderSearchResults(items) {
+    if (!this.savedPromptSearchResults) return;
     this.savedPromptSearchResults.innerHTML = "";
 
     if (!items.length) {
       const empty = document.createElement("div");
       empty.className = "search-empty";
-      empty.textContent = "未找到匹配的提示词";
+      const hasKeyword = !!this.savedPromptSearchInput?.value.trim();
+      if (!this.promptSaveDirHandle) {
+        empty.textContent = "请先通过“保存该提示词”设置保存目录";
+      } else if (hasKeyword) {
+        empty.textContent = "未找到匹配的提示词";
+      } else if (this.savedPromptFilter === "favorite") {
+        empty.textContent = "还没有收藏的提示词";
+      } else {
+        empty.textContent = "目录内暂无可显示的提示词";
+      }
       this.savedPromptSearchResults.appendChild(empty);
-      this.savedPromptSearchResults.classList.remove("hidden");
       return;
     }
 
     for (const item of items) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "search-item";
-      btn.textContent = item.displayName;
-      btn.addEventListener("click", () => this.onSelectSavedPrompt(item));
-      this.savedPromptSearchResults.appendChild(btn);
-    }
+      const row = document.createElement("div");
+      row.className = "search-item library-item";
 
-    this.savedPromptSearchResults.classList.remove("hidden");
+      const main = document.createElement("div");
+      main.className = "library-item-main";
+      main.addEventListener("click", () => this.onSelectSavedPrompt(item));
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "library-item-title-row";
+
+      const title = document.createElement("span");
+      title.className = "library-item-title";
+      title.textContent = item.displayName || "未命名提示词";
+
+      titleRow.appendChild(title);
+      
+
+      const meta = document.createElement("div");
+      meta.className = "library-item-meta";
+      meta.textContent = `更新于 ${this.formatPromptTime(item.updatedAt)}`;
+
+      main.appendChild(titleRow);
+      main.appendChild(meta);
+
+      const actions = document.createElement("div");
+      actions.className = "library-item-actions";
+
+      const favoriteBtn = document.createElement("button");
+      favoriteBtn.type = "button";
+      favoriteBtn.className = `library-action-btn${
+        item.isFavorite ? " is-favorite" : ""
+      }`;
+      favoriteBtn.title = item.isFavorite ? "取消收藏" : "收藏";
+      favoriteBtn.setAttribute("aria-label", favoriteBtn.title);
+      favoriteBtn.setAttribute("aria-pressed", String(item.isFavorite));
+      favoriteBtn.innerHTML =
+        '<svg class="ui-icon ui-icon-sm" aria-hidden="true"><use href="#i-bookmark"></use></svg>';
+      favoriteBtn.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        await this.onToggleSavedPromptFavorite(item);
+      });
+
+      const insertBtn = document.createElement("button");
+      insertBtn.type = "button";
+      insertBtn.className = "library-action-btn";
+      insertBtn.title = "插入到输入框";
+      insertBtn.setAttribute("aria-label", insertBtn.title);
+      insertBtn.innerHTML =
+        '<svg class="ui-icon ui-icon-sm" aria-hidden="true"><use href="#i-edit"></use></svg>';
+      insertBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.onInsertSavedPromptToInput(item);
+      });
+
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "library-action-btn";
+      copyBtn.title = "复制提示词";
+      copyBtn.setAttribute("aria-label", copyBtn.title);
+      copyBtn.innerHTML =
+        '<svg class="ui-icon ui-icon-sm" aria-hidden="true"><use href="#i-copy"></use></svg>';
+      copyBtn.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        await this.onCopySavedPrompt(item);
+      });
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "library-action-btn danger";
+      deleteBtn.title = "删除提示词";
+      deleteBtn.setAttribute("aria-label", deleteBtn.title);
+      deleteBtn.innerHTML =
+        '<svg class="ui-icon ui-icon-sm" aria-hidden="true"><use href="#i-x"></use></svg>';
+      deleteBtn.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        await this.onDeleteSavedPrompt(item);
+      });
+
+      actions.appendChild(favoriteBtn);
+      actions.appendChild(insertBtn);
+      actions.appendChild(copyBtn);
+      actions.appendChild(deleteBtn);
+
+      row.appendChild(main);
+      row.appendChild(actions);
+      this.savedPromptSearchResults.appendChild(row);
+    }
   }
 
   async loadSavedPromptSearchCache() {
+    const legacyFavoritesMap = await this.settingsService.getPromptFavorites();
     const sourceDirHandle = await this.settingsService.getPromptSaveDirHandle();
+    this.promptLibraryMetaError = "";
     if (!sourceDirHandle) {
+      this.promptFavoritesMap = {};
       this.savedPromptSearchCache = [];
-    this.promptSaveDirHandle = null;
+      this.promptSaveDirHandle = null;
       return;
+    }
+    this.promptSaveDirHandle = sourceDirHandle;
+
+    let libraryMeta = ExportService.createEmptyPromptLibraryMeta();
+    let hasLibraryMeta = false;
+    let shouldUseLegacyFavorites = true;
+    try {
+      const loadedMeta = await ExportService.readPromptLibraryMeta(sourceDirHandle, {
+        requestIfNeeded: false
+      });
+      if (loadedMeta) {
+        libraryMeta = loadedMeta;
+        hasLibraryMeta = true;
+        shouldUseLegacyFavorites = false;
+      }
+    } catch (error) {
+      shouldUseLegacyFavorites = false;
+      this.promptLibraryMetaError =
+        error?.message || "词库收藏数据读取失败，已按空收藏处理。";
     }
 
     const files = await ExportService.listPromptJsonFiles(sourceDirHandle);
     const cache = [];
+    const favoriteSourceMap = hasLibraryMeta
+      ? libraryMeta.favorites
+      : shouldUseLegacyFavorites
+      ? legacyFavoritesMap
+      : {};
+    const nextFavoritesMap = hasLibraryMeta ? { ...libraryMeta.favorites } : {};
+    let shouldWriteLibraryMeta = false;
 
     for (const item of files) {
       try {
@@ -1684,53 +2344,127 @@ class PopupController {
         const text = await file.text();
         const parsed = JSON.parse(text);
         const promptText = typeof parsed?.prompt === "string" ? parsed.prompt : "";
-        const name = typeof parsed?.name === "string" ? parsed.name : item.name.replace(/\.json$/i, "");
+        const jsonName =
+          typeof parsed?.name === "string" && parsed.name.trim()
+            ? parsed.name.trim()
+            : "";
+        const displayName =
+          this.getPromptDisplayNameFromFile(item.name) ||
+          jsonName ||
+          item.name.replace(/\.json$/i, "");
+        const savedAt =
+          typeof parsed?.savedAt === "string" && parsed.savedAt.trim()
+            ? parsed.savedAt.trim()
+            : "";
+        const scene =
+          typeof parsed?.scene === "string" && SCENE_CONFIG[parsed.scene]
+            ? parsed.scene
+            : "writing";
+        const updatedAt =
+          savedAt
+            ? savedAt
+            : file?.lastModified
+            ? new Date(file.lastModified).toISOString()
+            : nowISO();
+        const entityId = this.buildPromptEntityId({
+          savedAt,
+          prompt: promptText,
+          fileName: item.name
+        });
+        const favoriteKey = this.buildPromptFavoriteKey({ entityId });
+        const legacyFavoriteKeys = this.buildLegacyPromptFavoriteKeys({
+          fileName: item.name,
+          jsonName
+        });
+        const favoriteState = this.resolvePromptFavoriteState(
+          favoriteKey,
+          legacyFavoriteKeys,
+          favoriteSourceMap
+        );
+        if (favoriteState.key) {
+          nextFavoritesMap[favoriteKey] = favoriteState.favoriteAt || nowISO();
+          for (const legacyKey of legacyFavoriteKeys) {
+            if (
+              legacyKey !== favoriteKey &&
+              Object.prototype.hasOwnProperty.call(nextFavoritesMap, legacyKey)
+            ) {
+              delete nextFavoritesMap[legacyKey];
+            }
+          }
+          if (!hasLibraryMeta || favoriteState.key !== favoriteKey) {
+            shouldWriteLibraryMeta = true;
+          }
+        }
         cache.push({
           fileName: item.name,
-          displayName: name,
-          prompt: promptText
+          jsonName,
+          entityId,
+          displayName,
+          prompt: promptText,
+          scene,
+          savedAt,
+          updatedAt,
+          isFavorite: Boolean(favoriteState.key),
+          favoriteAt: favoriteState.favoriteAt || ""
         });
       } catch (_error) {
         // 忽略格式异常文件，不中断搜索功能
       }
     }
 
+    if (shouldWriteLibraryMeta) {
+      try {
+        await this.savePromptFavoritesToLibrary(nextFavoritesMap);
+      } catch (error) {
+        this.promptLibraryMetaError =
+          error?.message || "词库收藏数据写入失败，请稍后重试。";
+      }
+    } else {
+      this.promptFavoritesMap = nextFavoritesMap;
+    }
+
     this.savedPromptSearchCache = cache;
   }
 
-  async onSavedPromptSearchInput() {
-    const keyword = this.savedPromptSearchInput.value.trim().toLowerCase();
-    this.updateSearchClearButtonVisibility();
-    if (!keyword) {
-      this.clearSearchResults();
-      return;
-    }
-
+  async refreshSavedPromptLibrary() {
     try {
-      const sourceDirHandle = await this.settingsService.getPromptSaveDirHandle();
-      if (!sourceDirHandle) {
-        this.savedPromptSearchResults.innerHTML = "";
-        const tip = document.createElement("div");
-        tip.className = "search-empty";
-        tip.textContent = "请先通过“保存该提示词”设置保存目录";
-        this.savedPromptSearchResults.appendChild(tip);
-        this.savedPromptSearchResults.classList.remove("hidden");
-        return;
-      }
-
       await this.loadSavedPromptSearchCache();
-      const matches = this.savedPromptSearchCache.filter((item) =>
-        item.displayName.toLowerCase().includes(keyword)
-      );
-      this.renderSearchResults(matches.slice(0, 50));
+      this.updateSavedPromptFilterButtons();
+      const keyword = this.savedPromptSearchInput?.value || "";
+      const items = this.getFilteredSavedPromptItems(keyword);
+      this.renderSearchResults(items);
+      if (this.promptLibraryMetaError) {
+        if (this.lastPromptLibraryMetaError !== this.promptLibraryMetaError) {
+          this.setStatus(this.promptLibraryMetaError, true);
+          this.lastPromptLibraryMetaError = this.promptLibraryMetaError;
+        }
+      } else {
+        this.lastPromptLibraryMetaError = "";
+      }
     } catch (error) {
+      if (!this.savedPromptSearchResults) return;
       this.savedPromptSearchResults.innerHTML = "";
       const fail = document.createElement("div");
       fail.className = "search-empty";
-      fail.textContent = `搜索失败：${error.message}`;
+      fail.textContent = `提示词库加载失败：${error.message}`;
       this.savedPromptSearchResults.appendChild(fail);
-      this.savedPromptSearchResults.classList.remove("hidden");
     }
+  }
+
+  async onSavedPromptFilterChange(filter) {
+    if (!["favorite", "recent", "all"].includes(filter)) return;
+    this.savedPromptFilter = filter;
+    this.updateSavedPromptFilterButtons();
+    const keyword = this.savedPromptSearchInput?.value || "";
+    const items = this.getFilteredSavedPromptItems(keyword);
+    this.renderSearchResults(items);
+  }
+
+  async onSavedPromptSearchInput() {
+    const keyword = this.savedPromptSearchInput.value.trim();
+    this.updateSearchClearButtonVisibility();
+    const items = this.getFilteredSavedPromptItems(keyword);
+    this.renderSearchResults(items);
   }
 
   onSelectSavedPrompt(item) {
@@ -1742,16 +2476,118 @@ class PopupController {
     if (this.templateName) {
       this.templateName.value = item.displayName;
     }
-    this.savedPromptSearchInput.value = item.displayName;
-    this.updateSearchClearButtonVisibility();
-    this.clearSearchResults();
-    this.setStatus(`已导入提示词：${item.displayName}`);
+    this.setStatus(`已预览提示词：${item.displayName}`);
+  }
+
+  onInsertSavedPromptToInput(item) {
+    if (!item?.prompt) {
+      this.setStatus("该提示词内容为空。", true);
+      return;
+    }
+    this.inputText.value = item.prompt;
+    this.updateInputCount();
+    if (this.sceneSelect && item.scene) {
+      this.sceneSelect.value = item.scene;
+      this.syncSceneChips(item.scene);
+    }
+    this.setStatus(`已插入到输入框：${item.displayName}`);
+  }
+
+  async onCopySavedPrompt(item) {
+    if (!item?.prompt) {
+      this.setStatus("该提示词内容为空。", true);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(item.prompt);
+      this.setStatus(`已复制提示词：${item.displayName}`);
+    } catch (_error) {
+      this.outputText.value = item.prompt;
+      this.outputText.select();
+      document.execCommand("copy");
+      this.setStatus(`已复制提示词（兼容模式）：${item.displayName}`);
+    }
+  }
+
+  async onToggleSavedPromptFavorite(item) {
+    if (!item) return;
+    try {
+      const key = this.buildPromptFavoriteKey(item);
+      const legacyKeys = this.buildLegacyPromptFavoriteKeys({
+        fileName: item.fileName,
+        jsonName: item.jsonName
+      });
+      const nextMap = { ...this.promptFavoritesMap };
+      if (item.isFavorite) {
+        delete nextMap[key];
+        for (const legacyKey of legacyKeys) {
+          delete nextMap[legacyKey];
+        }
+      } else {
+        nextMap[key] = nowISO();
+      }
+      await this.savePromptFavoritesToLibrary(nextMap);
+      await this.refreshSavedPromptLibrary();
+      this.setStatus(
+        item.isFavorite
+          ? `已取消收藏：${item.displayName}`
+          : `已收藏提示词：${item.displayName}`
+      );
+    } catch (error) {
+      this.setStatus(`收藏操作失败：${error.message}`, true);
+    }
+  }
+
+  async onDeleteSavedPrompt(item) {
+    if (!item) return;
+    const canDeleteFile = !!(
+      item.fileName &&
+      this.promptSaveDirHandle &&
+      typeof this.promptSaveDirHandle.removeEntry === "function"
+    );
+    const confirmText = canDeleteFile
+      ? `确定删除提示词“${item.displayName}”吗？将同时删除保存目录里的 JSON 文件。`
+      : `确定删除提示词“${item.displayName}”吗？`;
+    const ok = window.confirm(confirmText);
+    if (!ok) return;
+    try {
+      if (canDeleteFile) {
+        await ExportService.ensurePermission(this.promptSaveDirHandle, "readwrite");
+        await this.promptSaveDirHandle.removeEntry(item.fileName);
+      }
+      const key = this.buildPromptFavoriteKey(item);
+      const legacyKeys = this.buildLegacyPromptFavoriteKeys({
+        fileName: item.fileName,
+        jsonName: item.jsonName
+      });
+      const keysToDelete = [key, ...legacyKeys];
+      const shouldUpdateFavorites = keysToDelete.some((favoriteKey) =>
+        Object.prototype.hasOwnProperty.call(this.promptFavoritesMap, favoriteKey)
+      );
+      if (shouldUpdateFavorites) {
+        const nextMap = { ...this.promptFavoritesMap };
+        for (const favoriteKey of keysToDelete) {
+          delete nextMap[favoriteKey];
+        }
+        await this.savePromptFavoritesToLibrary(nextMap);
+      }
+      await this.refreshSavedPromptLibrary();
+      await this.refreshPromptSavePathView({ preferredHandle: this.promptSaveDirHandle });
+      this.setStatus(
+        canDeleteFile
+          ? `已删除提示词文件：${item.displayName}`
+          : `当前环境不支持直接删除文件：${item.displayName}`
+      );
+    } catch (error) {
+      this.setStatus(`删除提示词失败：${error.message}`, true);
+    }
   }
 
   onClearSavedPromptSearch() {
     this.savedPromptSearchInput.value = "";
     this.updateSearchClearButtonVisibility();
-    this.clearSearchResults();
+    const items = this.getFilteredSavedPromptItems("");
+    this.renderSearchResults(items);
     this.savedPromptSearchInput.focus();
   }
 
@@ -1976,6 +2812,7 @@ class PopupController {
       if (this.templateSelect) {
         this.templateSelect.value = String(key);
       }
+      await this.refreshSavedPromptLibrary();
       this.setStatus(`提示词已保存：${saveResult.fileName}`);
     } catch (error) {
       if (error?.name === "AbortError") {
@@ -2019,6 +2856,198 @@ class PopupController {
       this.setStatus("提示词已删除。");
     } catch (error) {
       this.setStatus(`删除提示词失败：${error.message}`, true);
+    }
+  }
+
+  async onMergePromptLibrary() {
+    try {
+      if (!("showDirectoryPicker" in window)) {
+        this.setStatus("当前浏览器不支持目录选择，请升级 Chrome 后重试。", true);
+        return;
+      }
+
+      let targetDirHandle =
+        this.promptSaveDirHandle ||
+        (await this.settingsService.getPromptSaveDirHandle());
+      if (!targetDirHandle) {
+        this.setStatus("请先选择当前提示词保存目录，再导入另一份词库。", true);
+        return;
+      }
+
+      await ExportService.ensurePermission(targetDirHandle, "readwrite");
+      this.promptSaveDirHandle = targetDirHandle;
+
+      let sourceDirHandle;
+      try {
+        sourceDirHandle = await window.showDirectoryPicker({ mode: "read" });
+      } catch (error) {
+        const canFallback =
+          error?.name === "TypeError" || error?.name === "SecurityError";
+        if (!canFallback) {
+          throw error;
+        }
+        sourceDirHandle = await window.showDirectoryPicker();
+      }
+
+      if (await this.isSameDirectoryHandle(sourceDirHandle, targetDirHandle)) {
+        this.setStatus("来源词库和当前词库是同一个目录，无需合并。", true);
+        return;
+      }
+
+      this.setStatus("正在导入并合并词库，请稍候...");
+
+      await this.loadSavedPromptSearchCache();
+
+      const { items: sourceItems, invalidCount } =
+        await this.readPromptItemsFromDirectory(sourceDirHandle, {
+          requestIfNeeded: false
+        });
+      if (!sourceItems.length) {
+        this.setStatus("来源词库没有可导入的提示词文件。", true);
+        return;
+      }
+
+      let sourceMeta = null;
+      let sourceMetaError = "";
+      try {
+        sourceMeta = await ExportService.readPromptLibraryMeta(sourceDirHandle, {
+          requestIfNeeded: false
+        });
+      } catch (error) {
+        sourceMetaError =
+          error?.message || "来源词库收藏文件读取失败，已按空收藏处理。";
+      }
+
+      const sourceFavoritesMap = sourceMeta?.favorites || {};
+      const nextFavoritesMap = { ...this.promptFavoritesMap };
+      const usedFileNames = new Set(
+        this.savedPromptSearchCache.map((item) =>
+          this.normalizeFileName(item.fileName)
+        )
+      );
+      const targetFingerprintMap = new Map();
+      for (const item of this.savedPromptSearchCache) {
+        const fingerprint = this.buildPromptMergeFingerprint({
+          savedAt: item.savedAt,
+          updatedAt: item.updatedAt,
+          prompt: item.prompt,
+          fileName: item.fileName
+        });
+        if (!fingerprint || fingerprint === "unknown") continue;
+        if (!targetFingerprintMap.has(fingerprint)) {
+          targetFingerprintMap.set(fingerprint, item);
+        }
+      }
+
+      let importedCount = 0;
+      let skippedDuplicateCount = 0;
+      let renamedCount = 0;
+      let mergedFavoriteCount = 0;
+
+      for (const sourceItem of sourceItems) {
+        let targetItemRef =
+          targetFingerprintMap.get(sourceItem.mergeFingerprint) || null;
+
+        if (targetItemRef) {
+          skippedDuplicateCount += 1;
+        } else {
+          const uniqueFileResult = this.getUniquePromptImportFileName({
+            desiredFileName: sourceItem.fileName,
+            displayName: sourceItem.displayName,
+            usedFileNames
+          });
+
+          await ExportService.writePromptFileToDirectory({
+            dirHandle: targetDirHandle,
+            fileName: uniqueFileResult.fileName,
+            text: sourceItem.rawText
+          });
+
+          if (uniqueFileResult.renamed) {
+            renamedCount += 1;
+          }
+          importedCount += 1;
+
+          usedFileNames.add(this.normalizeFileName(uniqueFileResult.fileName));
+
+          targetItemRef = {
+            fileName: uniqueFileResult.fileName,
+            displayName:
+              this.getPromptDisplayNameFromFile(uniqueFileResult.fileName) ||
+              sourceItem.displayName,
+            jsonName: sourceItem.jsonName,
+            prompt: sourceItem.prompt,
+            savedAt: sourceItem.savedAt,
+            updatedAt: sourceItem.updatedAt,
+            entityId: this.buildPromptEntityId({
+              savedAt: sourceItem.savedAt,
+              prompt: sourceItem.prompt,
+              fileName: uniqueFileResult.fileName
+            })
+          };
+
+          if (
+            sourceItem.mergeFingerprint &&
+            sourceItem.mergeFingerprint !== "unknown" &&
+            !targetFingerprintMap.has(sourceItem.mergeFingerprint)
+          ) {
+            targetFingerprintMap.set(sourceItem.mergeFingerprint, targetItemRef);
+          }
+        }
+
+        const sourceFavoriteState = this.resolvePromptFavoriteState(
+          this.buildPromptFavoriteKey({ entityId: sourceItem.entityId }),
+          this.buildLegacyPromptFavoriteKeys({
+            fileName: sourceItem.fileName,
+            jsonName: sourceItem.jsonName
+          }),
+          sourceFavoritesMap
+        );
+
+        if (sourceFavoriteState.key) {
+          const targetFavoriteKey = this.buildPromptFavoriteKey({
+            entityId: targetItemRef.entityId
+          });
+          if (
+            targetFavoriteKey &&
+            !Object.prototype.hasOwnProperty.call(
+              nextFavoritesMap,
+              targetFavoriteKey
+            )
+          ) {
+            nextFavoritesMap[targetFavoriteKey] =
+              sourceFavoriteState.favoriteAt || nowISO();
+            mergedFavoriteCount += 1;
+          }
+        }
+      }
+
+      if (mergedFavoriteCount > 0) {
+        await this.savePromptFavoritesToLibrary(nextFavoritesMap);
+      }
+
+      await this.refreshSavedPromptLibrary();
+      await this.refreshPromptSavePathView({
+        preferredHandle: targetDirHandle
+      });
+
+      let summary = `词库已合并：新增 ${importedCount} 条，跳过重复 ${skippedDuplicateCount} 条，合并收藏 ${mergedFavoriteCount} 条`;
+      if (renamedCount > 0) {
+        summary += `，重命名 ${renamedCount} 条`;
+      }
+      if (invalidCount > 0) {
+        summary += `，跳过异常文件 ${invalidCount} 条`;
+      }
+      if (sourceMetaError) {
+        summary += `。${sourceMetaError}`;
+      }
+      this.setStatus(summary);
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        this.setStatus("已取消导入词库。");
+        return;
+      }
+      this.setStatus(`导入并合并词库失败：${error.message}`, true);
     }
   }
 
